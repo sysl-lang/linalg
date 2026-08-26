@@ -1,0 +1,44 @@
+// Linear algebra for sysl: vectors, matrices, and elimination over any element type that behaves
+// like a number.
+//
+// One body per operation and not one per element type. `solve`, `det`, `rank` and `inverse` are
+// written once against a bound and run at `real`, at `f32` and over `Complex[F]` unchanged -- which
+// is the claim the test suite is built to make, since a routine that had quietly specialised to the
+// reals would pass the first section and fail the complex one.
+//
+// This is the block a consumer writes to reach it:
+//
+//     dependencies {
+//       linalg { git = "github.com/sysl-lang/linalg", version = "0.1.0" }
+//     }
+//
+// The coordinate names the package, `linalg`; the module a program imports is `sh.sysl.linalg`. It
+// declares no dependencies of its own -- everything it needs is the standard library's `sysl.buf`,
+// `sysl.math` and `sysl.math.complex`.
+
+package {
+  name    = "linalg"
+  version = "0.1.0"
+
+  // **The oldest compiler this builds with, and the reason is how a matrix renders.** `Vector` and
+  // `Matrix` lay their cells out in columns, which means knowing how wide each rendering is before
+  // any of it is written -- and they measure into a `Counting` sink rather than gathering the text
+  // and throwing it away. `Counting` became public in `a20ae810` and the two renderers moved onto it
+  // in `6d4b3b3f`, both after 0.0.79, so an older compiler has nothing to measure with.
+  //
+  // Card `0284` is the one that put it there; before it, laying out a matrix built every cell's text
+  // twice.
+  sysl = "0.0.80"
+}
+
+// **`heap = true`, and it is the storage rather than the algebra that asks for it.** A matrix's cells
+// are one `&Buf[T]` and a vector's are another, sized by the dimensions the caller passes at run
+// time -- so nothing here can be given caller-supplied storage, because nothing here knows how much
+// to ask for until it is called. The elimination routines then build a working copy, since reducing
+// a matrix in place would consume the caller's.
+//
+// **What is NOT here is `os` or `posix`.** Nothing in this package opens, reads or writes anything:
+// a rendering goes into a `Writer` the caller passes, and where it ends up is the program's business.
+requires {
+  heap = true
+}
