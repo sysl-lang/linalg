@@ -9,7 +9,7 @@
 // This is the block a consumer writes to reach it:
 //
 //     dependencies {
-//       linalg { git = "github.com/sysl-lang/linalg", version = "0.1.0" }
+//       linalg { git = "github.com/sysl-lang/linalg", version = "0.1.1" }
 //     }
 //
 // The coordinate names the package, `linalg`; the module a program imports is `sh.sysl.linalg`. It
@@ -18,17 +18,20 @@
 
 package {
   name    = "linalg"
-  version = "0.1.0"
+  version = "0.1.1"
 
-  // **The oldest compiler this builds with, and the reason is how a matrix renders.** `Vector` and
-  // `Matrix` lay their cells out in columns, which means knowing how wide each rendering is before
-  // any of it is written -- and they measure into a `Counting` sink rather than gathering the text
-  // and throwing it away. `Counting` became public in `a20ae810` and the two renderers moved onto it
-  // in `6d4b3b3f`, both after 0.0.79, so an older compiler has nothing to measure with.
+  // **The oldest compiler this builds with, raised to 0.0.96 for the scalar on the left** -- `k * v`
+  // and `k * A`. `0385` widened coherence to count a trait's *arguments*, which is what gives an
+  // `impl` whose subject is the element a home in the module declaring `Vector`; `0388` is what lets
+  // the complex block be written at all, since on a generic subject the first fix was taken back by
+  // a reading under which `Vector[Complex[F]]` -- which merely contains a `Complex` -- was one.
   //
-  // Card `0284` is the one that put it there; before it, laying out a matrix built every cell's text
-  // twice.
-  sysl = "0.0.80"
+  // **What it used to be, and why, is worth keeping**: 0.0.80, because `Vector` and `Matrix` lay
+  // their cells out in columns and measure into a `Counting` sink rather than gathering the text and
+  // throwing it away. `Counting` became public in `a20ae810` and the two renderers moved onto it in
+  // `6d4b3b3f`, both after 0.0.79. Card `0284` is the one that put it there; before it, laying out a
+  // matrix built every cell's text twice.
+  sysl = "0.0.96"
 }
 
 // **`heap = true`, and it is the storage rather than the algebra that asks for it.** A matrix's cells

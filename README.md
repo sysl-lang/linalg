@@ -22,7 +22,7 @@ The module is **`sh.sysl.linalg`**. It depends on nothing outside the standard l
 
 ```
 dependencies {
-  linalg { git = "github.com/sysl-lang/linalg", version = "0.1.0" }
+  linalg { git = "github.com/sysl-lang/linalg", version = "0.1.1" }
 }
 ```
 

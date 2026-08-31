@@ -44,6 +44,40 @@ scaling_yields_a_vector()
 
     assert((v * 2.0).near(Vector.of([2.0, 4.0, 6.0]), eps), "every component doubled")
 
+// The scalar on the **left**, which is where a page of linear algebra writes it. One assertion per
+// element type this package implements `Scalar` for, because that is exactly how the blocks are
+// written: the subject of each is the element, and an `impl` may not be written for a bare type
+// parameter, so there is no one block covering them and no one test that would prove there was.
+@test("the scalar goes on the left of a vector too, at every element type")
+scaling_from_the_left()
+    var v = Vector.of([1.0, 2.0, 3.0])
+    var fv = Vector.of([1.0f32, 2.0f32])
+    var iv = Vector.of([1, 2, 3])
+    var cv = Vector.of([Complex(1.0, 1.0), Complex(2.0, -1.0)])
+    var i = Complex(0.0, 1.0)
+
+    assert((2.0 * v).near(v * 2.0, eps), "the reals, and it agrees with the right-hand form")
+    assert((2.0f32 * fv).near(fv * 2.0f32, 0.0001), "the narrower width")
+    assert_eq(2 * iv, iv * 2, "the integers, where the comparison is exact")
+    assert((i * cv).near(cv * i, eps), "and the complexes, at every float width at once")
+end scaling_from_the_left
+
+// The same, one dimension up. A matrix has three implementations of `Mul` and the left-hand blocks
+// have to reach the one that scales rather than the one that multiplies two matrices.
+@test("and on the left of a matrix, at every element type")
+scaling_a_matrix_from_the_left()
+    var a = Matrix.of(2, 3, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    var fa = Matrix.of(2, 2, [1.0f32, 2.0f32, 3.0f32, 4.0f32])
+    var ia = Matrix.of(2, 2, [1, 2, 3, 4])
+    var ca = Matrix.of(2, 2, [Complex(1.0, 0.0), Complex(0.0, 1.0), Complex(2.0, 0.0), Complex(0.0, -1.0)])
+    var i = Complex(0.0, 1.0)
+
+    assert((2.0 * a).near(Matrix.of(2, 3, [2.0, 4.0, 6.0, 8.0, 10.0, 12.0]), eps), "the reals")
+    assert((2.0f32 * fa).near(fa * 2.0f32, 0.0001), "the narrower width")
+    assert_eq(2 * ia, ia * 2, "the integers")
+    assert((i * ca).near(ca * i, eps), "and the complexes")
+end scaling_a_matrix_from_the_left
+
 @test("a matrix applied to a vector yields a vector, and to a matrix a matrix")
 the_two_matrix_products()
     var v = Vector.of([1.0, 2.0, 3.0])

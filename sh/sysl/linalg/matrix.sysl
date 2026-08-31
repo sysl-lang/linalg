@@ -2,6 +2,11 @@ module sh.sysl.linalg
 
 import sysl.buf.{Buf, buf}
 
+// The left-hand scaling blocks at the end of this file name both of these: the widths they are
+// written at, and the complexes they are written over.
+import sysl.math.Float
+import sysl.math.complex.Complex
+
 /** Matrices over any `Scalar`, and the two products whose results are different types.
  *
  * `A * v` gives a vector and `A * B` gives a matrix, so one type carries three implementations of one
@@ -272,6 +277,23 @@ impl[T: Scalar] Mul[T] for Matrix[T]
 
         out
     end mul
+
+/** Scaling with the scalar on the **left**, exactly as `vector.sysl` writes it and for the same
+ * reasons: one block per element type, because the subject is the element and an `impl` may not be
+ * written for a bare type parameter, and each one forwarding to the `Mul[T] for Matrix[T]` above
+ * rather than walking the cells a second time.
+ */
+impl Mul[Matrix[real], Matrix[real]] for real
+    mul(self, m: Matrix[real]) -> Matrix[real] = m * self
+
+impl Mul[Matrix[f32], Matrix[f32]] for f32
+    mul(self, m: Matrix[f32]) -> Matrix[f32] = m * self
+
+impl Mul[Matrix[int], Matrix[int]] for int
+    mul(self, m: Matrix[int]) -> Matrix[int] = m * self
+
+impl[F: Float + Display] Mul[Matrix[Complex[F]], Matrix[Complex[F]]] for Complex[F]
+    mul(self, m: Matrix[Complex[F]]) -> Matrix[Complex[F]] = m * self
 
 /** A pair as the index: a subscript takes one argument and a matrix wants two, so the one argument is
  * a pair.

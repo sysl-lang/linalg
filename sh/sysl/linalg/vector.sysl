@@ -6,6 +6,7 @@ import sysl.buf.{Buf, buf}
 // (`reference/modules.md § Imports`). This file leaned on the standard library's own scope for
 // it while the module lived under `sysl.math`, and says what it needs now that it does not.
 import sysl.math.Float
+import sysl.math.complex.Complex
 
 /** Vectors over any `Scalar`, and the half of a vector space whose product yields a *scalar*.
  *
@@ -19,6 +20,11 @@ import sysl.math.Float
  * arguments are built out of its own parameter says the same thing at every instantiation, so
  * `impl[T: Scalar] Mul[Vector[T], T] for Vector[T]` is one dot product for the reals, the complexes,
  * the integers and whatever else implements `Scalar`.
+ *
+ * **The one exception is the scalar on the LEFT, and it is one block per element type.** `k * v` is
+ * an `impl` whose subject is the *element*, so a version generic over `Scalar` would be a block for a
+ * bare type parameter -- which stands for every type at once and is refused. The four at the foot of
+ * this file are every type this package implements `Scalar` for.
  *
  * **A `Vector[T]` is a handle.** It is a length and a `&Buf[T]`, so assigning one shares the numbers
  * and costs a retain. Every operator below therefore builds a fresh vector rather than writing into
@@ -254,6 +260,37 @@ impl[T: Scalar] Mul[T] for Vector[T]
 
         out
     end mul
+
+/** Scaling with the scalar on the **left**, which is where a page of linear algebra writes it. Each
+ * block is the mirror of `Mul[T] for Vector[T]` above and computes nothing of its own: multiplication
+ * commutes, so each forwards to the block that already scales.
+ *
+ * **It is one block per element type rather than one over `Scalar`, and that is the language rather
+ * than an omission.** The subject here is the *element*, so a block generic over `Scalar` would be an
+ * `impl` for a bare type parameter -- which stands for every type at once, and `scalar.sysl` says at
+ * length why only a family the compiler closes may be one. These four are every type this package
+ * implements `Scalar` for; an element type a caller brings gets `v * k` and not `k * v`, and writes
+ * its own block beside its own type if it wants one.
+ *
+ * **The member each of these gives its type is `mul.2` rather than `mul`**, because the compiler
+ * already provides the arithmetic types' own multiplication under the plain name.
+ */
+impl Mul[Vector[real], Vector[real]] for real
+    mul(self, v: Vector[real]) -> Vector[real] = v * self
+
+impl Mul[Vector[f32], Vector[f32]] for f32
+    mul(self, v: Vector[f32]) -> Vector[f32] = v * self
+
+impl Mul[Vector[int], Vector[int]] for int
+    mul(self, v: Vector[int]) -> Vector[int] = v * self
+
+/** The complexes, at every float width at once -- and the block that could not be written until
+ * 0.0.96. `0385` widened coherence to count a trait's arguments, which is what gives all four of
+ * these a home here; on a *generic* subject it was then refused a second time, on the reading that
+ * `Vector[Complex[F]]` -- which merely contains a `Complex` -- *was* one. `0388` is the fix.
+ */
+impl[F: Float + Display] Mul[Vector[Complex[F]], Vector[Complex[F]]] for Complex[F]
+    mul(self, v: Vector[Complex[F]]) -> Vector[Complex[F]] = v * self
 
 impl[T: Scalar] Index[int, T] for Vector[T]
     index(self, i: int) -> T = self.at(i)
