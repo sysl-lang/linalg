@@ -1,0 +1,160 @@
+module sh.sysl.linalg
+@tests
+
+import sysl.math.Float
+import sysl.math.complex.Complex
+
+// What `lu.sysl` computes: one factoring, `P A = L U`, read for solutions, a determinant and an
+// inverse without eliminating again.
+//
+// **The expected numbers were computed by numpy** (`numpy.linalg.solve`, `det`, `inv` -- LAPACK's
+// `getrf`/`getrs`, an independent implementation), written in with the tolerance they are compared
+// at. The factors themselves are checked against their definition, which needs no oracle: `P A`
+// equals `L U`, `L` is unit lower triangular, `U` upper triangular and `P` a permutation.
+
+private const eps: real = 0.000000001
+
+private same[T: Scalar](a: T, b: T) -> bool = (a - b).norm() <= eps
+
+// Every row exchange the pivot search can make is needed here: the largest cell of the first column
+// is in the third row, and of the second column's remainder, in the fourth.
+private pivoting() -> Matrix[real] = Matrix.of(4, 4, [2.0, 1.0, 1.0, 0.0, 4.0, 3.0, 3.0, 1.0, 8.0, 7.0, 9.0, 5.0, 6.0, 7.0, 9.0, 8.0])
+
+@test("P A = L U, with L unit lower triangular and U upper triangular")
+lu_reproduces_the_matrix()
+    var a = pivoting()
+
+    lu(a) match
+        Ok(f) ->
+            var l = f.l()
+            var u = f.u()
+            var p = f.p()
+
+            assert((p * a).near(l * u, eps), "P A = L U")
+            assert((p * p.transpose()).near(Matrix.identity(4), 0.0), "P is a permutation")
+            assert(p.at(0, 2) == 1.0, "the first pivot came from the third row")
+
+            for i in 0..<4
+                assert(l.at(i, i) == 1.0, "L's diagonal is ones")
+
+                for j in i + 1..<4
+                    assert(l.at(i, j) == 0.0, "L is lower triangular")
+                    assert(u.at(j, i) == 0.0, "U is upper triangular")
+
+            // Partial pivoting is what bounds every multiplier by one.
+            for i in 0..<4
+                for j in 0..<i do assert(l.at(i, j).abs() <= 1.0, "no multiplier exceeds one")
+        Err(e) -> assert(false, f"LU of an invertible matrix: $e")
+end lu_reproduces_the_matrix
+
+@test("an LU answers numpy's solution, determinant and inverse")
+lu_against_numpy()
+    lu(pivoting()) match
+        Ok(f) ->
+            f.solve(Vector.of([1.0, 2.0, 3.0, 4.0])) match
+                Ok(x) -> assert(x.near(Vector.of([1.0000000000000007, 0.4999999999999992, -1.5000000000000002, 1.0000000000000004]), eps), "x, numpy")
+                Err(e) -> assert(false, f"solve: $e")
+
+            assert(same(f.det(), 7.999999999999998), "det, numpy")
+
+            var inv = Matrix.of(4, 4, [2.2500000000000004, -0.75000000000000022, -0.25000000000000022, 0.25000000000000017, -3.0000000000000004, 2.5, -0.49999999999999972, -2.5376526277146434e-16, -0.50000000000000022, -0.99999999999999978, 1.0, -0.5, 1.5000000000000004, -0.50000000000000011, -0.50000000000000011, 0.50000000000000011])
+
+            assert(f.inverse().near(inv, eps), "the inverse, numpy")
+            assert((f.inverse() * pivoting()).near(Matrix.identity(4), eps), "and it inverts")
+        Err(e) -> assert(false, f"$e")
+end lu_against_numpy
+
+@test("one factoring solves several right-hand sides, each as a separate solve would")
+lu_several_right_hand_sides()
+    var a = pivoting()
+    var b = Matrix.of(4, 2, [1.0, 0.0, 2.0, 1.0, 3.0, -1.0, 4.0, 2.0])
+
+    lu(a) match
+        Ok(f) ->
+            var x: Matrix[real] = Matrix.zeros(4, 2)
+
+            for j in 0..<2
+                f.solve(b.col(j)) match
+                    Ok(xj) ->
+                        assert(solve(a, b.col(j)) == Ok(xj), "the same numbers exactly as a separate solve")
+
+                        for i in 0..<4 do x.set(i, j, xj.at(i))
+                    Err(e) -> assert(false, f"$e")
+
+            assert(x.near(Matrix.of(4, 2, [1.0000000000000007, 1.1657341758564144e-15, 0.49999999999999922, 2.9999999999999987, -1.5000000000000002, -3.0, 1.0000000000000004, 1.0000000000000004]), eps), "X, numpy")
+        Err(e) -> assert(false, f"$e")
+end lu_several_right_hand_sides
+
+@test("solve, det and inverse through gauss give exactly what the LU gives")
+gauss_is_the_lu()
+    var a = pivoting()
+    var b = Vector.of([1.0, -2.0, 0.5, 3.0])
+
+    lu(a) match
+        Ok(f) ->
+            assert(det(a) == f.det(), "det")
+            assert(solve(a, b) == f.solve(b), "solve")
+            assert(inverse(a) == Ok(f.inverse()), "inverse")
+        Err(e) -> assert(false, f"$e")
+end gauss_is_the_lu
+
+@test("a singular matrix is refused with Singular, and so is one that is not square")
+lu_refuses()
+    lu(Matrix.of(3, 3, [1.0, 2.0, 3.0, 2.0, 4.0, 6.0, 1.0, 0.0, 1.0])) match
+        Ok(_) -> assert(false, "a singular matrix has no LU here")
+        Err(e) -> assert_eq(e, Singular, "singular")
+
+    lu(Matrix.of(2, 3, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0])) match
+        Ok(_) -> assert(false, "a 2x3 matrix has no square LU")
+        Err(e) -> assert_eq(e, NotSquare, "not square")
+
+    assert(det(Matrix.of(2, 2, [1.0, 2.0, 2.0, 4.0])) == 0.0, "a singular determinant is zero exactly")
+end lu_refuses
+
+@test("a right-hand side of the wrong length is refused")
+lu_wrong_length()
+    lu(pivoting()) match
+        Ok(f) ->
+            f.solve(Vector.of([1.0, 2.0, 3.0])) match
+                Ok(_) -> assert(false, "three entries against four rows")
+                Err(e) -> assert_eq(e, ShapeMismatch, "the vector")
+        Err(e) -> assert(false, f"$e")
+
+@test("factoring leaves the matrix it was given alone")
+lu_leaves_the_input()
+    var a = pivoting()
+
+    lu(a) match
+        Ok(_) -> assert(a == pivoting(), "the cells are the caller's")
+        Err(e) -> assert(false, f"$e")
+
+@test("the same factoring runs at f32")
+lu_at_f32()
+    var a = Matrix.of(2, 2, [2.0f32, 1.0f32, 1.0f32, 3.0f32])
+
+    lu(a) match
+        Ok(f) ->
+            assert((f.p() * a).near(f.l() * f.u(), 0.0001), "P A = L U")
+            assert((f.det() - 5.0f32).abs() <= 0.0001f32, "det")
+
+            f.solve(Vector.of([5.0f32, 10.0f32])) match
+                Ok(x) -> assert(x.near(Vector.of([1.0f32, 3.0f32]), 0.0001), "x")
+                Err(e) -> assert(false, f"$e")
+
+            assert((f.inverse() * a).near(Matrix.identity(2), 0.0001), "the inverse")
+        Err(e) -> assert(false, f"$e")
+end lu_at_f32
+
+@test("and over the complexes, against numpy")
+lu_over_the_complexes()
+    var a = Matrix.of(2, 2, [Complex(1.0, 1.0), Complex(2.0, 0.0), Complex(0.0, 3.0), Complex(1.0, -1.0)])
+
+    lu(a) match
+        Ok(f) ->
+            assert(same(f.det(), Complex(2.0, -6.000000000000001)), "det, numpy")
+
+            f.solve(Vector.of([Complex(1.0, 0.0), Complex(0.0, 1.0)])) match
+                Ok(x) -> assert(x.near(Vector.of([Complex(0.5, 0.0), Complex(0.25, -0.25)]), eps), "x, numpy")
+                Err(e) -> assert(false, f"$e")
+        Err(e) -> assert(false, f"$e")
+end lu_over_the_complexes

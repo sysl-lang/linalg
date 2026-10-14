@@ -3,10 +3,13 @@ module sh.sysl.linalg
 /** Gaussian elimination with partial pivoting, over any field, and the four things it answers: a
  * solution, a determinant, a rank, and an inverse.
  *
- * One routine underlies all four. Reducing a matrix to upper-triangular form records everything they
- * need -- the pivots, whose product is the determinant; the number of row swaps, whose parity is its
- * sign; and the count of non-zero pivots, which is the rank. Writing them as four independent
- * algorithms would be four chances to disagree about what a zero pivot means.
+ * One routine underlies all four, and it is `lu.sysl`'s `decompose`. Reducing a matrix to
+ * upper-triangular form records everything they need -- the pivots, whose product is the determinant;
+ * the number of row swaps, whose parity is its sign; and the count of non-zero pivots, which is the
+ * rank. Writing them as four independent algorithms would be four chances to disagree about what a
+ * zero pivot means. **Each function here factors once and asks one question**; a caller with several
+ * questions about one matrix -- several right-hand sides, or a solution and a determinant -- calls
+ * `lu` and asks the `Lu` instead, which does not eliminate again.
  *
  * **Everything here is bounded by `Field` rather than by `Scalar`, and that bound is the safeguard.**
  * Every step divides -- the multiplier `a[i][k] / p`, the back-substituted `acc / u[i][i]` -- and a
@@ -28,10 +31,6 @@ module sh.sysl.linalg
  * buys -- a body that pivots without knowing what a size is.
  */
 
-// Naming the trait is what makes `magnitude` **reachable**: a trait's members are in scope only where
-// the trait is, and the bound and the import answer two different questions.
-import sysl.math.Magnitude
-
 /** A pivot whose size is this small is treated as zero. It has to be a tolerance rather than a test
  * against the element's own zero: elimination is subtraction, and a column that cancels exactly in
  * exact arithmetic leaves rounding noise instead of a clean zero.
@@ -41,68 +40,7 @@ import sysl.math.Magnitude
  * module writes all of them at `real` -- which is exactly the line `Scalar` draws: the *ordering* is in
  * the element's own terms, and the one fixed number is in the module's.
  */
-private const tiny: real = 0.000000000001
-
-/** What one reduction to upper-triangular form learned. `swaps` is carried rather than folded into a
- * sign so that `rank` -- which does not care -- reads the same structure as `det`, which does.
- */
-private struct Reduced[T: Field]
-    upper: Matrix[T]
-    swaps: int
-    pivots: int
-
-/** Reduces a copy of `m` to upper-triangular form, applying every row operation to `carry` as well.
- *
- * `carry` is what makes one routine serve four callers: `solve` passes the right-hand side as a single
- * column and reads the answer back by substitution, `inverse` passes the identity, and `det` and
- * `rank` pass a matrix with no columns at all and ignore it. The alternative -- an elimination per
- * caller -- is the same arithmetic written four times.
- */
-private reduce[T: Field](m: Matrix[T], carry: Matrix[T]) -> Reduced[T]
-    var u = m.copy()
-    var swaps = 0
-    var pivots = 0
-    var row = 0
-
-    for col in 0..<u.cols
-        if row >= u.rows then break
-
-        // The largest remaining cell in this column, which is the pivot partial pivoting picks --
-        // largest by magnitude, since that is the only comparison every element type has.
-        var best = row
-        var bestMag = u.at(row, col).magnitude()
-
-        for i in row + 1..<u.rows
-            var mag = u.at(i, col).magnitude()
-
-            if mag > bestMag
-                best = i
-                bestMag = mag
-
-        // Every candidate is zero, so this column contributes no pivot and the same row goes on to
-        // look at the next one. That is what makes the routine work on a matrix that is not full rank.
-        if u.at(best, col).norm() <= tiny then continue
-
-        if best != row
-            u.swap_rows(row, best)
-            carry.swap_rows(row, best)
-            swaps += 1
-
-        var p = u.at(row, col)
-
-        for i in row + 1..<u.rows
-            var f = u.at(i, col) / p
-
-            if f != T.zero()
-                for j in col..<u.cols do u.set(i, j, u.at(i, j) - f * u.at(row, j))
-
-                for j in 0..<carry.cols do carry.set(i, j, carry.at(i, j) - f * carry.at(row, j))
-
-        pivots += 1
-        row += 1
-
-    Reduced(u, swaps, pivots)
-end reduce
+private[linalg] const tiny: real = 0.000000000001
 
 /** Back-substitution through an upper-triangular matrix, for one column of the carried right-hand side.
  * Module-wide because `factor.sysl`'s least squares ends in the same triangle.
@@ -124,56 +62,29 @@ end substitute
 
 /** `A x = b`. Square and non-singular or nothing: an underdetermined system has a family of solutions
  * and this returns one vector, so promising an answer for one would be lying about which.
+ *
+ * The length is checked before the matrix is factored, so a wrong-length right-hand side is refused
+ * as a shape whatever the numbers in the matrix are.
  */
 solve[T: Field](m: Matrix[T], b: Vector[T]) -> Result[Vector[T], Fail]
     if !m.is_square() then return Err(NotSquare)
     if m.rows != b.n then return Err(ShapeMismatch)
 
-    var carry: Matrix[T] = Matrix.zeros(m.rows, 1)
+    lu(m)?.solve(b)
 
-    for i in 0..<m.rows do carry.set(i, 0, b.at(i))
-
-    var r = reduce(m, carry)
-
-    if r.pivots < m.rows then return Err(Singular)
-
-    Ok(substitute(r.upper, carry, 0))
-end solve
-
-/** The product of the pivots, with its sign from the parity of the swaps. The element type's own zero
- * for a singular matrix, which falls out rather than being tested for: a column with no pivot leaves
- * a zero on the diagonal.
+/** The product of the pivots, with its sign from the parity of the swaps -- and the element type's
+ * own zero, exactly, for a singular matrix: a column with no pivot is a zero factor, and multiplying
+ * out the rounding noise left where the pivot would have been would answer a number that is not zero.
  */
 det[T: Field](m: Matrix[T]) -> T
     require m.is_square(), "a determinant needs a square matrix"
 
-    var r = reduce(m, Matrix.zeros(m.rows, 0))
-    var acc = if r.swaps % 2 == 0 then T.one() else -T.one()
+    var d = decompose(m)
 
-    for i in 0..<m.rows do acc = acc * r.upper.at(i, i)
-
-    acc
-end det
+    if d.1 < m.rows then T.zero() else d.0.det()
 
 /** The number of pivots the reduction found, which needs no square matrix and no invertibility. */
-rank[T: Field](m: Matrix[T]) -> int = reduce(m, Matrix.zeros(m.rows, 0)).pivots
+rank[T: Field](m: Matrix[T]) -> int = decompose(m).1
 
-/** `A⁻¹`, by carrying the identity through the same elimination and substituting once per column. */
-inverse[T: Field](m: Matrix[T]) -> Result[Matrix[T], Fail]
-    if !m.is_square() then return Err(NotSquare)
-
-    var n = m.rows
-    var carry: Matrix[T] = Matrix.identity(n)
-    var r = reduce(m, carry)
-
-    if r.pivots < n then return Err(Singular)
-
-    var out: Matrix[T] = Matrix.zeros(n, n)
-
-    for col in 0..<n
-        var x = substitute(r.upper, carry, col)
-
-        for i in 0..<n do out.set(i, col, x.at(i))
-
-    Ok(out)
-end inverse
+/** `A⁻¹`, by solving against each column of the identity through one factoring. */
+inverse[T: Field](m: Matrix[T]) -> Result[Matrix[T], Fail] = Ok(lu(m)?.inverse())

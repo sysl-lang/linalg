@@ -1,0 +1,179 @@
+module sh.sysl.linalg
+
+/** The LU factorization with partial pivoting, `P A = L U`, kept so that one factoring answers many
+ * questions: a solution for each right-hand side, the determinant and the inverse, none of which
+ * eliminates again.
+ *
+ * **This is the elimination `gauss.sysl` answers through**, and it is bounded by `Field` for the same
+ * reason -- every step divides -- so it runs at `real`, at `f32` and over `Complex[F]` unchanged. The
+ * pivot is the largest candidate by magnitude, and a candidate whose `norm` is at or below `tiny` is
+ * treated as zero, exactly as `gauss.sysl` documents.
+ *
+ * **The factors are stored packed in one matrix**: `U` on and above the diagonal, and below it the
+ * multipliers that are `L`'s cells -- the place where elimination leaves a zero is where the
+ * multiplier that made the zero is kept. `L`'s diagonal is all ones and is not stored. The row
+ * exchanges are kept as a permutation, `perm[i]` naming the row of `A` that ended up in row `i`.
+ */
+
+import sysl.buf.{Buf, buf}
+import sysl.math.Magnitude
+
+/** A square, non-singular matrix factored once. `l`, `u` and `p` give the three factors back as
+ * ordinary matrices, for a caller who wants to see them; `solve`, `det` and `inverse` read the packed
+ * form directly.
+ */
+struct Lu[T: Field]
+    packed: Matrix[T]
+    perm: &Buf[int]
+    swaps: int
+
+    /** The unit lower-triangular factor. */
+    l(self) -> Matrix[T]
+        var n = self.packed.rows
+        var out: Matrix[T] = Matrix.identity(n)
+
+        for i in 0..<n
+            for j in 0..<i do out.set(i, j, self.packed.at(i, j))
+
+        out
+    end l
+
+    /** The upper-triangular factor, whose diagonal holds the pivots. */
+    u(self) -> Matrix[T]
+        var n = self.packed.rows
+        var out: Matrix[T] = Matrix.zeros(n, n)
+
+        for i in 0..<n
+            for j in i..<n do out.set(i, j, self.packed.at(i, j))
+
+        out
+    end u
+
+    /** The permutation matrix: row `i` of `P A` is row `perm[i]` of `A`. */
+    p(self) -> Matrix[T]
+        var n = self.packed.rows
+        var out: Matrix[T] = Matrix.zeros(n, n)
+
+        for i in 0..<n do out.set(i, self.perm.at(usize(i)), T.one())
+
+        out
+    end p
+
+    /** The product of the pivots, with its sign from the parity of the row exchanges. */
+    det(self) -> T
+        var acc = if self.swaps % 2 == 0 then T.one() else -T.one()
+
+        for i in 0..<self.packed.rows do acc = acc * self.packed.at(i, i)
+
+        acc
+    end det
+
+    /** `A x = b`, by one forward and one backward substitution. */
+    solve(self, b: Vector[T]) -> Result[Vector[T], Fail]
+        if b.n != self.packed.rows then return Err(ShapeMismatch)
+
+        Ok(through(self, b))
+
+    /** `A⁻¹`, a column at a time: column `j` solves against the `j`th basis vector. */
+    inverse(self) -> Matrix[T]
+        var n = self.packed.rows
+        var out: Matrix[T] = Matrix.zeros(n, n)
+
+        for j in 0..<n
+            var x = through(self, Vector.basis(n, j))
+
+            for i in 0..<n do out.set(i, j, x.at(i))
+
+        out
+    end inverse
+
+/** `P A = L U` with partial pivoting, refusing a matrix that is not square or is singular -- the
+ * refusal is made here, once, so that nothing read off an `Lu` divides by a zero pivot.
+ */
+lu[T: Field](a: Matrix[T]) -> Result[Lu[T], Fail]
+    if !a.is_square() then return Err(NotSquare)
+
+    var d = decompose(a)
+
+    if d.1 < a.rows then return Err(Singular)
+
+    Ok(d.0)
+
+/** Elimination with partial pivoting into the packed form, and the number of pivots found.
+ *
+ * It takes any shape and any rank, which is what lets `rank` read it as well as `lu`: a column whose
+ * every remaining candidate is negligible contributes no pivot, and the same row goes on to the next
+ * column. The packing is then only `L` and `U` when every column found a pivot, which `lu` checks.
+ */
+private[linalg] decompose[T: Field](m: Matrix[T]) -> (Lu[T], int)
+    var a = m.copy()
+    var perm: Buf[int] = buf()
+    var swaps = 0
+    var pivots = 0
+    var row = 0
+
+    for i in 0..<a.rows do perm.push(i)
+
+    for col in 0..<a.cols
+        if row >= a.rows then break
+
+        var best = row
+        var bestMag = a.at(row, col).magnitude()
+
+        for i in row + 1..<a.rows
+            var mag = a.at(i, col).magnitude()
+
+            if mag > bestMag
+                best = i
+                bestMag = mag
+
+        if a.at(best, col).norm() <= tiny then continue
+
+        if best != row
+            a.swap_rows(row, best)
+
+            var t = perm.at(usize(row))
+
+            perm.set(usize(row), perm.at(usize(best)))
+            perm.set(usize(best), t)
+            swaps += 1
+
+        var p = a.at(row, col)
+
+        for i in row + 1..<a.rows
+            var f = a.at(i, col) / p
+
+            a.set(i, col, f)
+
+            if f != T.zero()
+                for j in col + 1..<a.cols do a.set(i, j, a.at(i, j) - f * a.at(row, j))
+
+        pivots += 1
+        row += 1
+
+    (Lu(a, perm, swaps), pivots)
+end decompose
+
+/** `L U x = P b`: forward through the unit lower triangle, then back through the upper one. */
+private through[T: Field](f: Lu[T], b: Vector[T]) -> Vector[T]
+    var a = f.packed
+    var n = a.rows
+    var x: Vector[T] = Vector.zeros(n)
+
+    for i in 0..<n
+        var acc = b.at(f.perm.at(usize(i)))
+
+        for j in 0..<i do acc -= a.at(i, j) * x.at(j)
+
+        x.set(i, acc)
+
+    for step in 0..<n
+        var i = n - 1 - step
+        var acc = x.at(i)
+
+        for j in i + 1..<n do acc -= a.at(i, j) * x.at(j)
+
+        x.set(i, acc / a.at(i, i))
+
+    x
+end through

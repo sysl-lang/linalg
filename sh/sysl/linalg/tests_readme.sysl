@@ -15,6 +15,28 @@ readme_solve()
         Ok(x) -> assert_eq(f"x = $x", "x = (1, 3)", "x")
         Err(e) -> assert(false, f"no solution: $e")
 
+@test("README: one LU, asked several questions")
+readme_lu()
+    var a = Matrix.of(3, 3, [2.0, 1.0, 1.0, 4.0, 3.0, 3.0, 8.0, 7.0, 9.0])
+    var want = ["x = (1, 1, 1)", "x = (1, -1.5, 0.5)"]
+
+    lu(a) match
+        Ok(f) ->
+            assert_eq(f"det = ${f.det()}%g", "det = 4", "det")
+
+            var k = 0
+
+            for b in [Vector.of([4.0, 10.0, 24.0]), Vector.of([1.0, 1.0, 2.0])]
+                f.solve(b) match
+                    Ok(x) -> assert_eq(f"x = ${x}%.6s", want[k], "x")
+                    Err(e) -> assert(false, f"$e")
+
+                k += 1
+
+            assert_eq(f"inverse = ${f.inverse()}%.6s", "inverse = (1.5, -0.5, 0); (-3, 2.5, -0.5); (1, -1.5, 0.5)", "inverse")
+        Err(e) -> assert(false, f"no factoring: $e")
+end readme_lu
+
 @test("README: least squares, QR and Cholesky")
 readme_factorizations()
     var a = Matrix.of(4, 2, [1.0, 0.0, 1.0, 1.0, 1.0, 2.0, 1.0, 3.0])

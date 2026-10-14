@@ -8,7 +8,8 @@ sh/sysl/linalg/
     matrix.sysl     matrices, and the two products whose results are different types
     vector.sysl     vectors, and the half of a vector space whose product yields a scalar
     scalar.sysl     what a cell has to be — and the one promise no signature can carry
-    gauss.sysl      elimination with partial pivoting: solve, det, rank, inverse
+    lu.sysl         P A = L U with partial pivoting, factored once and asked many times
+    gauss.sysl      solve, det, rank and inverse, each one call through that elimination
     bareiss.sysl    fraction-free elimination, for rings whose division cannot be trusted
     factor.sysl     Householder QR, least squares through it, and Cholesky — at real and f32
     eigen.sysl      symmetric eigenvalues and eigenvectors, by cyclic Jacobi — at real and f32
@@ -16,6 +17,7 @@ sh/sysl/linalg/
                     pseudo-inverse and condition number read off it — at real and f32
     fail.sysl       what a decomposition refuses, and why
     tests.sysl      what all of it claims, run by `sysl test .`
+    tests_lu.sysl       LU, against numpy and against P A = L U
     tests_factor.sysl   the factorizations, against numpy and against their definitions
     tests_eigen.sysl    the eigenproblem, against numpy and against A v = λ v
     tests_svd.sysl      the SVD, against numpy and against A = U diag(σ) Vt and Moore-Penrose
@@ -47,6 +49,35 @@ solve(a, b) match
 
 ```output
 x = (1, 3)
+```
+
+`solve`, `det` and `inverse` each factor the matrix and throw the factoring away. To ask one matrix
+several questions, factor it once with `lu` (`P A = L U`, partial pivoting) and ask the `Lu`; it runs
+over every `Field` element type, as `solve` does:
+
+```
+import sh.sysl.linalg.{Matrix, Vector, lu}
+
+var a = Matrix.of(3, 3, [2.0, 1.0, 1.0, 4.0, 3.0, 3.0, 8.0, 7.0, 9.0])
+
+lu(a) match
+    Ok(f) ->
+        print(f"det = ${f.det()}%g")
+
+        for b in [Vector.of([4.0, 10.0, 24.0]), Vector.of([1.0, 1.0, 2.0])]
+            f.solve(b) match
+                Ok(x) -> print(f"x = ${x}%.6s")
+                Err(e) -> print(f"$e")
+
+        print(f"inverse = ${f.inverse()}%.6s")
+    Err(e) -> print(f"no factoring: $e")
+```
+
+```output
+det = 4
+x = (1, 1, 1)
+x = (1, -1.5, 0.5)
+inverse = (1.5, -0.5, 0); (-3, 2.5, -0.5); (1, -1.5, 0.5)
 ```
 
 The factorizations take any width `sysl.math.Float` covers — `real` and `f32` — since a reflector's
@@ -173,6 +204,23 @@ multiplier it forms and returns a plausible wrong answer.
 For that case there is `bareiss.sysl`, whose every intermediate entry is a minor of the original
 matrix, so every division it performs comes out exact. It asks for no `Field`, no `Magnitude`, no
 tolerance and no ordering.
+
+## Performance
+
+Measured 2026-10-13 on an Apple M5 Pro, sysl 0.1.0-alpha.11 at `-O2` against naive C with the same
+loops at `clang -O2` (Apple clang 21), `real`/`double`, median of 5–9 runs. The figure is how many
+times longer the sysl package takes:
+
+| n | `A * B` | `lu` | `qr` |
+|---|---|---|---|
+| 64 | 22× | 21× | 7.9× |
+| 256 | 20× | 16× | 2.6× |
+| 512 | 20× | 16× | 1.8× |
+
+These are straightforward loops, not a tuned BLAS, and the gap is in the compiler rather than in the
+algorithms: every `Matrix.set` takes and drops a reference to the cell buffer, and with that in the
+inner loop the buffer's bounds are reloaded and checked on every cell and nothing vectorizes. QR's
+figure is smaller only because its column-wise reflections are slow in C too.
 
 ## Where it came from
 

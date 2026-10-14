@@ -253,6 +253,12 @@ impl[T: Scalar] Mul[Vector[T], Vector[T]] for Matrix[T]
 
 /** The one implementation here that writes no trait arguments at all, because the trait's defaults
  * already say what it does: a matrix times a matrix is a matrix.
+ *
+ * **The loops run `i`, `k`, `j`, and nothing is copied.** Each left cell `a[i][k]` scales row `k` of
+ * the right operand into row `i` of the result, so every inner loop walks two rows in storage order.
+ * Each result cell still accumulates its products in ascending `k` from zero, so the numbers are
+ * exactly those of a dot product per cell -- the order that took a row and a column out as vectors for
+ * every cell, and paid an `n`-long strided copy per cell for it.
  */
 impl[T: Scalar] Mul for Matrix[T]
     mul(self, rhs: Matrix[T]) -> Matrix[T]
@@ -261,9 +267,10 @@ impl[T: Scalar] Mul for Matrix[T]
         var out: Matrix[T] = Matrix.zeros(self.rows, rhs.cols)
 
         for i in 0..<self.rows
-            var r = self.row(i)
+            for k in 0..<self.cols
+                var a = self.at(i, k)
 
-            for j in 0..<rhs.cols do out.set(i, j, r * rhs.col(j))
+                for j in 0..<rhs.cols do out.set(i, j, out.at(i, j) + a * rhs.at(k, j))
 
         out
     end mul
