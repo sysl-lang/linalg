@@ -1,0 +1,166 @@
+module sh.sysl.linalg
+
+/** The eigenvalues and eigenvectors of a real symmetric matrix, by the cyclic Jacobi method.
+ *
+ * **Jacobi rather than tridiagonalization and QL**, for accuracy and for the shape of the code. A
+ * Jacobi rotation zeroes one off-diagonal pair at a time and the rotations are orthogonal by
+ * construction, so the accumulated vectors are orthonormal to rounding whatever the spectrum; and with
+ * the *relative* threshold below -- a pair is negligible against the geometric mean of its two
+ * diagonal cells, not against the whole matrix -- a graded matrix such as `diag(1e8, 1, 1e-8)` coupled
+ * by small cells has its smallest eigenvalue found to full relative precision, which a reduction to
+ * tridiagonal form judged against the largest cell does not promise. The price is speed: a sweep costs
+ * `O(n³)` and a handful of sweeps are needed, where QL needs one reduction. For the sizes this package
+ * is written for, accuracy is the better bargain.
+ *
+ * The bound is the one `factor.sysl` uses, for the same reason: a rotation needs a square root, a
+ * threshold needs the width's own `epsilon`, and sorting the values needs an order.
+ */
+
+import sysl.math.Float
+
+/** How many sweeps over every off-diagonal pair before the iteration gives up. Cyclic Jacobi converges
+ * quadratically once the off-diagonal part is small, and finite input settles in well under a dozen
+ * sweeps; the limit exists for input that never settles -- a `nan` off the diagonal is never
+ * negligible, however often it is rotated.
+ */
+private const max_sweeps: int = 64
+
+/** The eigenvalues of the symmetric matrix `a` in ascending order, and its eigenvectors as the columns
+ * of an orthogonal matrix, column `j` belonging to value `j`: `A V = V diag(values)`.
+ *
+ * **An eigenvector's sign is not normalized**, and where a value is repeated only its eigenspace is
+ * determined: the columns given for it are one orthonormal basis of that space among many. Symmetry is
+ * checked as `cholesky` checks it, to within an `epsilon` of each pair's own size, and only the
+ * matrix's own numbers are then read -- both triangles, so an asymmetry inside the tolerance is
+ * averaged rather than one side of it silently preferred.
+ */
+eigh[T: Field + Float](a: Matrix[T]) -> Result[(Vector[T], Matrix[T]), Fail]
+    var vectors: Matrix[T] = Matrix.identity(a.rows)
+    var values = diagonalize(a, vectors, true)?
+
+    Ok((values, vectors))
+
+/** The eigenvalues of the symmetric matrix `a` in ascending order, without the vectors -- the same
+ * rotations, with the cost of accumulating them left out.
+ */
+eigvalsh[T: Field + Float](a: Matrix[T]) -> Result[Vector[T], Fail]
+    var unused: Matrix[T] = Matrix.zeros(0, 0)
+
+    diagonalize(a, unused, false)
+
+/** Rotates a copy of `a` to diagonal form and answers the diagonal in ascending order; with `want`,
+ * the rotations are accumulated into `vectors` (which starts as the identity) and its columns are put
+ * in the same order.
+ */
+private diagonalize[T: Field + Float](a: Matrix[T], vectors: Matrix[T], want: bool) -> Result[Vector[T], Fail]
+    if !a.is_square() then return Err(NotSquare)
+    if !symmetric(a) then return Err(NotSymmetric)
+
+    var n = a.rows
+    var w = a.copy()
+
+    for i in 0..<n
+        for j in i + 1..<n
+            var mean = (a.at(i, j) + a.at(j, i)) / T(2)
+
+            w.set(i, j, mean)
+            w.set(j, i, mean)
+
+    var sweeps = 0
+
+    loop
+        var rotated = false
+
+        for p in 0..<n
+            for q in p + 1..<n
+                if rotate(w, vectors, want, p, q) then rotated = true
+
+        if !rotated then break
+
+        sweeps += 1
+
+        if sweeps == max_sweeps then return Err(NotConverged)
+
+    var values: Vector[T] = Vector.zeros(n)
+
+    for i in 0..<n do values.set(i, w.at(i, i))
+
+    ascending(values, vectors, want)
+    Ok(values)
+end diagonalize
+
+/** One Jacobi rotation in the plane `(p, q)`, zeroing `w[p, q]` and `w[q, p]`, or nothing when that
+ * pair is already negligible -- and whether it rotated.
+ *
+ * **Negligible is relative to the pair's own diagonal**: `|w[p, q]| <= epsilon * sqrt(|w[p, p]| |w[q, q]|)`.
+ * Perturbing a cell that small moves every eigenvalue by a relative `epsilon` at most, so leaving it
+ * costs nothing a rounding did not already cost, and the smallest eigenvalue of a graded matrix is not
+ * swamped by the largest. The comparison is written so that a `nan` is never negligible.
+ *
+ * The angle is the stable one: `t = tan θ` is the smaller root of `t² + 2 t θ' - 1 = 0`, written
+ * without a subtraction, and `hypot` keeps `θ'²` from overflowing when the coupling is tiny against the
+ * diagonal gap.
+ */
+private rotate[T: Field + Float](w: Matrix[T], v: Matrix[T], want: bool, p: int, q: int) -> bool
+    var apq = w.at(p, q)
+    var app = w.at(p, p)
+    var aqq = w.at(q, q)
+
+    if apq.abs() <= T.epsilon() * (app.abs() * aqq.abs()).sqrt() then return false
+
+    var theta = (aqq - app) / (T(2) * apq)
+    var t = T.one().copysign(theta) / (theta.abs() + theta.hypot(T.one()))
+    var c = T.one() / t.hypot(T.one())
+    var s = t * c
+
+    w.set(p, p, app - t * apq)
+    w.set(q, q, aqq + t * apq)
+    w.set(p, q, T.zero())
+    w.set(q, p, T.zero())
+
+    for k in 0..<w.rows
+        if k != p && k != q
+            var akp = w.at(k, p)
+            var akq = w.at(k, q)
+            var kp = c * akp - s * akq
+            var kq = s * akp + c * akq
+
+            w.set(k, p, kp)
+            w.set(p, k, kp)
+            w.set(k, q, kq)
+            w.set(q, k, kq)
+
+    if want
+        for k in 0..<v.rows
+            var vkp = v.at(k, p)
+            var vkq = v.at(k, q)
+
+            v.set(k, p, c * vkp - s * vkq)
+            v.set(k, q, s * vkp + c * vkq)
+
+    true
+end rotate
+
+/** Sorts `values` ascending in place, moving the matching columns of `vectors` with them. A selection
+ * sort: `n` exchanges at most, and `n` is the order of a matrix that was just rotated `O(n³)` times.
+ */
+private ascending[T: Field + Float](values: Vector[T], vectors: Matrix[T], want: bool)
+    for i in 0..<values.n
+        var low = i
+
+        for j in i + 1..<values.n
+            if values.at(j) < values.at(low) then low = j
+
+        if low != i
+            var x = values.at(i)
+
+            values.set(i, values.at(low))
+            values.set(low, x)
+
+            if want
+                for k in 0..<vectors.rows
+                    var y = vectors.at(k, i)
+
+                    vectors.set(k, i, vectors.at(k, low))
+                    vectors.set(k, low, y)
+end ascending

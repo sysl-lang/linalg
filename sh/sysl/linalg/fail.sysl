@@ -21,6 +21,11 @@ enum Fail
      * makes `xᵀ A x` zero or negative, and no real `L` has `L Lᵀ` equal to it.
      */
     NotPositiveDefinite
+    /** An iteration that should settle did not within its limit -- for the symmetric eigenproblem, an
+     * off-diagonal cell that no number of rotations made negligible, which finite input does not do
+     * and a `nan` does.
+     */
+    NotConverged
 
 /** The rendering, so that a refusal can be printed without matching on it -- and so that a
  * `Result[Vector[T], Fail]` prints as a whole, since `Result` renders both arms through theirs.
@@ -39,6 +44,7 @@ impl Display for Fail
             RankDeficient -> "the matrix is rank-deficient"
             NotSymmetric -> "the matrix is not symmetric"
             NotPositiveDefinite -> "the matrix is not positive definite"
+            NotConverged -> "the iteration did not converge"
 
         display_str(text, out, fmt)
     end display

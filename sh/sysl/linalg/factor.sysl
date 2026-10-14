@@ -157,16 +157,9 @@ end lstsq
  */
 cholesky[T: Field + Float](a: Matrix[T]) -> Result[Matrix[T], Fail]
     if !a.is_square() then return Err(NotSquare)
+    if !symmetric(a) then return Err(NotSymmetric)
 
     var n = a.rows
-
-    for i in 0..<n
-        for j in i + 1..<n
-            var x = a.at(i, j)
-            var y = a.at(j, i)
-
-            if (x - y).abs() > T.epsilon() * (x.abs() + y.abs()) then return Err(NotSymmetric)
-
     var l: Matrix[T] = Matrix.zeros(n, n)
 
     for j in 0..<n
@@ -189,3 +182,18 @@ cholesky[T: Field + Float](a: Matrix[T]) -> Result[Matrix[T], Fail]
 
     Ok(l)
 end cholesky
+
+/** Whether the square matrix `a` is its own transpose to within rounding: each pair of mirrored cells
+ * may differ by an `epsilon` of their own size, which is what a product like `Mᵀ M` leaves. Shared by
+ * every routine that reads a symmetric matrix, so that `cholesky` and `eigh` agree on what one is.
+ */
+private[linalg] symmetric[T: Field + Float](a: Matrix[T]) -> bool
+    for i in 0..<a.rows
+        for j in i + 1..<a.rows
+            var x = a.at(i, j)
+            var y = a.at(j, i)
+
+            if (x - y).abs() > T.epsilon() * (x.abs() + y.abs()) then return false
+
+    true
+end symmetric

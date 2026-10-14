@@ -11,9 +11,11 @@ sh/sysl/linalg/
     gauss.sysl      elimination with partial pivoting: solve, det, rank, inverse
     bareiss.sysl    fraction-free elimination, for rings whose division cannot be trusted
     factor.sysl     Householder QR, least squares through it, and Cholesky — at real and f32
+    eigen.sysl      symmetric eigenvalues and eigenvectors, by cyclic Jacobi — at real and f32
     fail.sysl       what a decomposition refuses, and why
     tests.sysl      what all of it claims, run by `sysl test .`
     tests_factor.sysl   the factorizations, against numpy and against their definitions
+    tests_eigen.sysl    the eigenproblem, against numpy and against A v = λ v
 package.hocon       who this package is, and what it needs of the machine
 ```
 
@@ -61,6 +63,23 @@ qr(a) match
 cholesky(Matrix.of(2, 2, [4.0, 2.0, 2.0, 3.0])) match
     Ok(l) -> print(f"L = $l")
     Err(e) -> print(f"$e")                     // NotSymmetric, NotPositiveDefinite, NotSquare
+```
+
+A symmetric matrix's eigenvalues come back ascending, with the eigenvectors as the columns of an
+orthogonal matrix in the same order; `eigvalsh` answers the values alone:
+
+```
+import sh.sysl.linalg.{Matrix, eigh, eigvalsh}
+
+var a = Matrix.of(3, 3, [2.0, 1.0, 1.0, 1.0, 2.0, 1.0, 1.0, 1.0, 2.0])
+
+eigh(a) match
+    Ok((values, vectors)) -> print(f"λ = $values\nV = $vectors")    // λ = 1, 1, 4
+    Err(e) -> print(f"$e")                     // NotSymmetric, NotSquare, NotConverged
+
+eigvalsh(a) match
+    Ok(values) -> print(f"λ = $values")
+    Err(e) -> print(f"$e")
 ```
 
 ## One body per operation, not one per element type

@@ -1,0 +1,242 @@
+module sh.sysl.linalg
+@tests
+
+import sysl.math.Float
+
+// What `eigen.sysl` computes: the eigenvalues and eigenvectors of a real symmetric matrix.
+//
+// **Every expected number below was computed by numpy** (`numpy.linalg.eigh`, LAPACK's divide and
+// conquer, not Jacobi), and the graded matrix's values were also bisected to fifty digits from its
+// characteristic polynomial, so that the smallest one has an oracle that is not a floating-point
+// eigensolver at all. An eigenvector's sign is arbitrary, so a column is compared with numpy's up to
+// sign.
+//
+// Each answer is also checked against the definition, which needs no oracle: `A v = λ v` for every
+// pair, the vectors are orthonormal, the values sum to the trace, and their product is the
+// determinant that `gauss.sysl` computes by elimination -- a different route to the same number.
+
+private const tol: real = 0.000000001
+
+private close(a: real, b: real) -> bool = (a - b).norm() <= tol
+
+/** `v` is `expected` or its negation, to within `eps` -- the one freedom an eigenvector of a simple
+ * eigenvalue has.
+ */
+private along[T: Field + Float](v: Vector[T], expected: Vector[T], eps: real) -> bool = v.near(expected, eps) || (-v).near(expected, eps)
+
+/** `A v = λ v` for every column. */
+private pairs[T: Field + Float](a: Matrix[T], values: Vector[T], vectors: Matrix[T], eps: real) -> bool
+    for j in 0..<values.n
+        var v = vectors.col(j)
+
+        if !(a * v).near(v * values.at(j), eps) then return false
+
+    true
+
+private orthogonal[T: Field + Float](q: Matrix[T], eps: real) -> bool = (q.transpose() * q).near(Matrix.identity(q.cols), eps)
+
+private total(values: Vector[real]) -> real
+    var s = 0.0
+
+    for i in 0..<values.n do s += values.at(i)
+
+    s
+
+private product(values: Vector[real]) -> real
+    var p = 1.0
+
+    for i in 0..<values.n do p *= values.at(i)
+
+    p
+
+private s3() -> Matrix[real] = Matrix.of(3, 3, [4.0, 1.0, 2.0, 1.0, 3.0, 0.0, 2.0, 0.0, 5.0])
+
+private s4() -> Matrix[real] = Matrix.of(4, 4, [2.0, -1.0, 0.0, 3.0, -1.0, -4.0, 1.0, 0.0, 0.0, 1.0, 1.0, 2.0, 3.0, 0.0, 2.0, -1.0])
+
+// -- agreement with numpy and with the definition -----------------------------------------------------
+
+@test("eigh of a positive definite 3x3 agrees with numpy and with its definition")
+eigh_of_a_3x3()
+    var a = s3()
+
+    eigh(a) match
+        Ok((values, vectors)) ->
+            assert(values.near(Vector.of([1.8548973087995761, 3.4760236029181333, 6.669079088282287]), tol), "values ascending, numpy")
+            assert(along(vectors.col(0), Vector.of([0.6793130619863365, -0.593233311917385, -0.4319814827585527]), tol), "v0, numpy")
+            assert(along(vectors.col(1), Vector.of([0.37436195478307205, 0.7864356987513782, -0.4912962635115686]), tol), "v1, numpy")
+            assert(along(vectors.col(2), Vector.of([0.6311789687764832, 0.1720265367929077, 0.7563200248659909]), tol), "v2, numpy")
+            assert(pairs(a, values, vectors, tol), "A v = λ v")
+            assert(orthogonal(vectors, tol), "the vectors are orthonormal")
+            assert(close(total(values), a.trace()), "the values sum to the trace")
+            assert(close(product(values), det(a)), "and multiply to the determinant")
+        Err(e) -> assert(false, "eigh of a 3x3: " + str(e))
+end eigh_of_a_3x3
+
+@test("eigh of an indefinite 4x4 finds the negative eigenvalues too")
+eigh_of_an_indefinite_4x4()
+    var a = s4()
+
+    eigh(a) match
+        Ok((values, vectors)) ->
+            assert(values.near(Vector.of([-4.352431893725986, -3.5092633864845726, 1.5963680944144716, 4.265327185796087]), tol), "values, numpy")
+            assert(along(vectors.col(0), Vector.of([0.19008072223030012, 0.9668178641284119, -0.15065672851258954, -0.08021899271660532]), tol), "v0, numpy")
+            assert(along(vectors.col(1), Vector.of([-0.42688162552596115, 0.09203513277025824, -0.38171661614584124, 0.8146128142144848]), tol), "v1, numpy")
+            assert(along(vectors.col(2), Vector.of([-0.4486449478756547, 0.23238915750857894, 0.8518903186932164, 0.13782552425031622]), tol), "v2, numpy")
+            assert(along(vectors.col(3), Vector.of([0.7618130397744397, -0.052801812569164594, 0.32538878288721457, 0.5576513256419431]), tol), "v3, numpy")
+            assert(pairs(a, values, vectors, tol), "A v = λ v")
+            assert(orthogonal(vectors, tol), "the vectors are orthonormal")
+            assert(close(total(values), -2.0), "the values sum to the trace")
+            assert(close(product(values), det(a)), "and multiply to the determinant, 104")
+        Err(e) -> assert(false, "eigh of a 4x4: " + str(e))
+end eigh_of_an_indefinite_4x4
+
+@test("eigvalsh answers eigh's values without the vectors")
+eigvalsh_matches_eigh()
+    eigvalsh(s4()) match
+        Ok(values) -> assert(values.near(Vector.of([-4.352431893725986, -3.5092633864845726, 1.5963680944144716, 4.265327185796087]), tol), "values, numpy")
+        Err(e) -> assert(false, "eigvalsh of a 4x4: " + str(e))
+
+@test("eigh leaves the matrix it was given alone")
+eigh_does_not_consume()
+    var a = s3()
+
+    eigh(a) match
+        Ok(_) -> assert(a == s3(), "the input is unchanged")
+        Err(e) -> assert(false, "eigh: " + str(e))
+
+// -- edge cases --------------------------------------------------------------------------------------
+
+@test("the eigenvalue of a 1x1 matrix is its cell")
+eigh_of_one_by_one()
+    eigh(Matrix.of(1, 1, [-2.5])) match
+        Ok((values, vectors)) ->
+            assert_eq(values.at(0), -2.5, "the cell, exactly")
+            assert_eq(vectors.at(0, 0), 1.0, "and the vector is the unit")
+        Err(e) -> assert(false, "eigh of 1x1: " + str(e))
+
+@test("a diagonal matrix is its own answer, sorted")
+eigh_of_a_diagonal_matrix()
+    eigh(Matrix.of(3, 3, [3.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 2.0])) match
+        Ok((values, vectors)) ->
+            // Nothing is rotated, so the answer is exact: the diagonal reordered, and the axes with it.
+            assert(values == Vector.of([-1.0, 2.0, 3.0]), "the diagonal, ascending")
+            assert(vectors == Matrix.of(3, 3, [0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]), "the axes, permuted alike")
+        Err(e) -> assert(false, "eigh of a diagonal matrix: " + str(e))
+
+@test("the identity has one eigenvalue three times, and every basis is an answer")
+eigh_of_the_identity()
+    var one: Matrix[real] = Matrix.identity(3)
+
+    eigh(one) match
+        Ok((values, vectors)) ->
+            assert(values == Vector.of([1.0, 1.0, 1.0]), "1, three times")
+            assert(vectors == Matrix.identity(3), "the identity is already diagonal")
+        Err(e) -> assert(false, "eigh of the identity: " + str(e))
+
+@test("a two-fold eigenvalue is answered with an orthonormal basis of its eigenspace")
+eigh_of_a_repeated_eigenvalue()
+    var a = Matrix.of(3, 3, [2.0, 1.0, 1.0, 1.0, 2.0, 1.0, 1.0, 1.0, 2.0])
+
+    eigh(a) match
+        Ok((values, vectors)) ->
+            assert(values.near(Vector.of([1.0, 1.0, 4.0]), tol), "1 twice and 4, numpy")
+            assert(along(vectors.col(2), Vector.of([0.5773502691896258, 0.5773502691896258, 0.5773502691896258]), tol), "the simple one's vector is determined")
+            // The other two are any orthonormal pair orthogonal to (1, 1, 1): A v = v for each, and
+            // orthonormality, is all that can be asked of them.
+            assert(pairs(a, values, vectors, tol), "A v = λ v, so each lies in its eigenspace")
+            assert(orthogonal(vectors, tol), "and the basis is orthonormal")
+            assert(close(product(values), det(a)), "the product is the determinant, 4")
+        Err(e) -> assert(false, "eigh with a repeated value: " + str(e))
+end eigh_of_a_repeated_eigenvalue
+
+@test("the zero matrix has zero eigenvalues and the axes for vectors")
+eigh_of_zero()
+    var zero: Matrix[real] = Matrix.zeros(3, 3)
+
+    eigh(zero) match
+        Ok((values, vectors)) ->
+            assert(values == Vector.zeros(3), "zeros")
+            assert(vectors == Matrix.identity(3), "the axes")
+        Err(e) -> assert(false, "eigh of zero: " + str(e))
+
+// `D A D` with `D = diag(1e4, 1, 1e-4)` and `A` well conditioned: the values span sixteen orders, and
+// each is determined to a relative `epsilon` by the matrix's own cells. The relative threshold is what
+// finds the smallest one to that precision; a threshold judged against the whole matrix would promise
+// only an absolute error of `epsilon * 1e8`, which is larger than the value itself.
+@test("a graded matrix's smallest eigenvalue is found to relative precision")
+eigh_of_a_large_spread()
+    var a = Matrix.of(3, 3, [100000000.0, 1000.0, 0.0, 1000.0, 1.0, 0.00001, 0.0, 0.00001, 0.00000001])
+    var exact = [0.00000000989898989797990103, 0.990000000002010101, 100000000.010000000099]
+
+    eigh(a) match
+        Ok((values, vectors)) ->
+            for i in 0..<3
+                assert((values.at(i) - exact[i]).norm() <= 0.000000000001 * exact[i], "a relative 1e-12 of the 50-digit value")
+
+            assert(along(vectors.col(0), Vector.of([0.00000000010101010201494581, -0.000010101010201494584, 0.9999999999489848]), tol), "v0, numpy")
+            assert(orthogonal(vectors, tol), "the vectors are orthonormal")
+            assert(pairs(a, values, vectors, 0.000001), "A v = λ v, to an epsilon of the largest value")
+        Err(e) -> assert(false, "eigh of a graded matrix: " + str(e))
+end eigh_of_a_large_spread
+
+@test("the same decomposition runs at f32")
+eigh_at_f32()
+    var a = Matrix.of(2, 2, [2.0f32, 1.0f32, 1.0f32, 2.0f32])
+
+    eigh(a) match
+        Ok((values, vectors)) ->
+            assert(values.near(Vector.of([1.0f32, 3.0f32]), 0.00001), "1 and 3, numpy")
+            assert(along(vectors.col(0), Vector.of([0.70710677f32, -0.70710677f32]), 0.00001), "v0, numpy")
+            assert(along(vectors.col(1), Vector.of([0.70710677f32, 0.70710677f32]), 0.00001), "v1, numpy")
+            assert(pairs(a, values, vectors, 0.00001), "A v = λ v")
+            assert(orthogonal(vectors, 0.00001), "the vectors are orthonormal")
+        Err(e) -> assert(false, "eigh at f32: " + str(e))
+
+    eigvalsh(a) match
+        Ok(values) -> assert(values.near(Vector.of([1.0f32, 3.0f32]), 0.00001), "and the values alone")
+        Err(e) -> assert(false, "eigvalsh at f32: " + str(e))
+end eigh_at_f32
+
+// -- refusals ----------------------------------------------------------------------------------------
+
+@test("eigh refuses a matrix that is not square")
+eigh_refuses_non_square()
+    eigh(Matrix.of(2, 3, [1.0, 0.0, 0.0, 0.0, 1.0, 0.0])) match
+        Ok(_) -> assert(false, "a non-square matrix is refused")
+        Err(e) -> assert_eq(e, NotSquare, "and says which")
+
+@test("eigh refuses a matrix that is not symmetric")
+eigh_refuses_asymmetric()
+    eigh(Matrix.of(2, 2, [4.0, 1.0, 2.0, 3.0])) match
+        Ok(_) -> assert(false, "an asymmetric matrix is refused")
+        Err(e) -> assert_eq(e, NotSymmetric, "and says which")
+
+@test("eigvalsh refuses the same shapes")
+eigvalsh_refuses()
+    eigvalsh(Matrix.of(2, 3, [1.0, 0.0, 0.0, 0.0, 1.0, 0.0])) match
+        Ok(_) -> assert(false, "a non-square matrix is refused")
+        Err(e) -> assert_eq(e, NotSquare, "and says which")
+
+    eigvalsh(Matrix.of(2, 2, [4.0, 1.0, 2.0, 3.0])) match
+        Ok(_) -> assert(false, "an asymmetric matrix is refused")
+        Err(e) -> assert_eq(e, NotSymmetric, "and says which")
+
+// A `nan` passes the symmetry check -- it is no further from its mirror than the tolerance, because it
+// is no distance at all -- and is never negligible, so every sweep rotates it again.
+@test("an off-diagonal nan never converges, and says so")
+eigh_does_not_converge_on_nan()
+    var nan = real.nan()
+    var a = Matrix.of(2, 2, [1.0, nan, nan, 2.0])
+
+    eigh(a) match
+        Ok(_) -> assert(false, "a nan is not diagonalized")
+        Err(e) -> assert_eq(e, NotConverged, "and says which")
+
+    eigvalsh(a) match
+        Ok(_) -> assert(false, "nor are its values found")
+        Err(e) -> assert_eq(e, NotConverged, "and says which")
+end eigh_does_not_converge_on_nan
+
+@test("non-convergence renders")
+not_converged_renders()
+    assert_eq(str(NotConverged), "the iteration did not converge", "non-convergence")
