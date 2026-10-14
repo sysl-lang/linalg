@@ -1,0 +1,311 @@
+module sh.sysl.linalg
+@tests
+
+import sysl.math.Float
+
+// What `svd.sysl` computes: the thin singular value decomposition and what is read off it.
+//
+// **Every expected number below was computed by numpy** (`numpy.linalg.svd`, LAPACK's divide and
+// conquer on a bidiagonal reduction, not Jacobi; `matrix_rank`; `cond`; `pinv(a, rtol=None)`). A
+// singular pair's sign is arbitrary, so numpy's were normalized -- each row of `Vt` with its largest
+// cell positive, and `U`'s column with it -- and a pair here is compared up to that one joint sign.
+//
+// Each answer is also checked against the definition, which needs no oracle: `U diag(σ) Vt = A`, the
+// columns of `U` and the rows of `Vt` are orthonormal, `σ` is descending and nonnegative, `σ²` is the
+// spectrum `eigvalsh` finds for the smaller Gram matrix by a different method, and `pinv` meets the
+// four Moore-Penrose conditions.
+
+private const tol: real = 0.000000001
+
+private close(a: real, b: real) -> bool = (a - b).norm() <= tol
+
+/** Column `j` of `u` and row `j` of `vt` are `eu` and `ev`, both as given or both negated. */
+private paired[T: Field + Float](u: Matrix[T], vt: Matrix[T], j: int, eu: Vector[T], ev: Vector[T], eps: real) -> bool
+    if u.col(j).near(eu, eps) && vt.row(j).near(ev, eps) then return true
+
+    (-u.col(j)).near(eu, eps) && (-vt.row(j)).near(ev, eps)
+
+private diag[T: Field + Float](s: Vector[T]) -> Matrix[T]
+    var d: Matrix[T] = Matrix.zeros(s.n, s.n)
+
+    for i in 0..<s.n do d.set(i, i, s.at(i))
+
+    d
+
+/** Everything the definition promises of `svd(a)`, `pinv(a)` and the rest, at a tolerance `eps`
+ * relative to the largest singular value.
+ */
+private definition[T: Field + Float](a: Matrix[T], eps: real)
+    svd(a) match
+        Ok((u, s, vt)) ->
+            var k = if a.rows < a.cols then a.rows else a.cols
+            var scale = if s.n > 0 && s.at(0).norm() > 1.0 then s.at(0).norm() else 1.0
+
+            assert(u.rows == a.rows && u.cols == k && s.n == k && vt.rows == k && vt.cols == a.cols, "thin shapes")
+            assert((u * diag(s) * vt).near(a, eps * scale), "U diag(σ) Vt = A")
+            assert((u.transpose() * u).near(Matrix.identity(k), eps), "U has orthonormal columns")
+            assert((vt * vt.transpose()).near(Matrix.identity(k), eps), "V has orthonormal columns")
+
+            for i in 0..<k
+                assert(s.at(i) >= T.zero(), "σ is nonnegative")
+                if i > 0 then assert(s.at(i) <= s.at(i - 1), "σ is descending")
+
+            var gram = if a.rows < a.cols then a * a.transpose() else a.transpose() * a
+
+            eigvalsh(gram) match
+                Ok(values) ->
+                    for i in 0..<k
+                        assert((s.at(i) * s.at(i) - values.at(k - 1 - i)).norm() <= eps * scale * scale, "σ² is the spectrum of the Gram matrix")
+                Err(e) -> assert(false, "eigvalsh of the Gram matrix: " + str(e))
+
+            singular_values(a) match
+                Ok(alone) -> assert(alone.near(s, eps * scale), "singular_values agrees with svd")
+                Err(e) -> assert(false, "singular_values: " + str(e))
+        Err(e) -> assert(false, "svd: " + str(e))
+
+    pinv(a) match
+        Ok(p) ->
+            assert(p.rows == a.cols && p.cols == a.rows, "pinv is n x m")
+            assert((a * p * a).near(a, eps), "A P A = A")
+            assert((p * a * p).near(p, eps), "P A P = P")
+            assert((a * p).transpose().near(a * p, eps), "A P is symmetric")
+            assert((p * a).transpose().near(p * a, eps), "P A is symmetric")
+        Err(e) -> assert(false, "pinv: " + str(e))
+end definition
+
+private t43() -> Matrix[real] = Matrix.of(4, 3, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0, 1.0, 0.0, 1.0])
+
+private w24() -> Matrix[real] = Matrix.of(2, 4, [1.0, 2.0, 0.0, 3.0, -1.0, 0.0, 4.0, 2.0])
+
+private rd() -> Matrix[real] = Matrix.of(3, 3, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0])
+
+// -- agreement with numpy and with the definition -----------------------------------------------------
+
+@test("svd of a tall 4x3 agrees with numpy and with its definition")
+svd_of_a_tall_matrix()
+    var a = t43()
+
+    svd(a) match
+        Ok((u, s, vt)) ->
+            assert(s.near(Vector.of([17.45089558463664, 0.9869391657365877, 0.7015656613921293]), tol), "σ, numpy")
+            assert(paired(u, vt, 0, Vector.of([0.20882939756518384, 0.5027074321838486, 0.8362242314927112, 0.06636682156098839]), Vector.of([0.46642852963239634, 0.5513178255711642, 0.6917319437126237]), tol), "pair 0, numpy")
+            assert(paired(u, vt, 1, Vector.of([-0.7231878428455109, -0.13767965376374283, 0.21236852664821113, 0.642606618227062]), Vector.of([0.8665983442107419, -0.44159331846839306, -0.23238470452091536]), tol), "pair 1, numpy")
+            assert(paired(u, vt, 2, Vector.of([-0.6531005371338523, 0.20832197127836058, 0.0951488365033383, -0.7218090769658088]), Vector.of([0.1773463745221807, 0.7078446130977871, -0.6837428370025406]), tol), "pair 2, numpy")
+        Err(e) -> assert(false, "svd of a 4x3: " + str(e))
+
+    definition(a, tol)
+
+    svd_rank(a) match
+        Ok(r) -> assert_eq(r, 3, "full rank, numpy")
+        Err(e) -> assert(false, "svd_rank: " + str(e))
+
+    cond(a) match
+        Ok(k) -> assert(close(k, 24.874215693522583), "cond, numpy")
+        Err(e) -> assert(false, "cond: " + str(e))
+
+    pinv(a) match
+        Ok(p) -> assert(p.near(Matrix.of(3, 4, [-0.7945205479452063, -0.05479452054794487, 0.23287671232876714, 0.38356164383561575, -0.3287671232876715, 0.28767123287671253, 0.027397260273972518, -1.0136986301369868, 0.8150684931506856, -0.15068493150684972, -0.10958904109589032, 0.5547945205479461]), tol), "pinv, numpy")
+        Err(e) -> assert(false, "pinv: " + str(e))
+end svd_of_a_tall_matrix
+
+@test("svd of a wide 2x4 goes through the transpose and agrees with numpy")
+svd_of_a_wide_matrix()
+    var a = w24()
+
+    svd(a) match
+        Ok((u, s, vt)) ->
+            assert(s.near(Vector.of([4.85832047191896, 3.3759031668774435]), tol), "σ, numpy")
+            assert(paired(u, vt, 0, Vector.of([0.4618103808040001, 0.8869786762835195]), Vector.of([-0.0875134314290273, 0.19011112316417114, 0.7302759720444518, 0.650304670768483]), tol), "pair 0, numpy")
+            assert(paired(u, vt, 1, Vector.of([-0.8869786762835195, 0.46181038080400005]), Vector.of([-0.39953428472745195, -0.5254763732479534, 0.5471843924139018, -0.5146223636649789]), tol), "pair 1, numpy")
+        Err(e) -> assert(false, "svd of a 2x4: " + str(e))
+
+    definition(a, tol)
+
+    cond(a) match
+        Ok(k) -> assert(close(k, 1.4391172470781155), "cond, numpy")
+        Err(e) -> assert(false, "cond: " + str(e))
+
+    pinv(a) match
+        Ok(p) -> assert(p.near(Matrix.of(4, 2, [0.09665427509293675, -0.07063197026022298, 0.15613382899628253, -0.0371747211895911, -0.07434944237918216, 0.2081784386617099, 0.19702602230483268, 0.04832713754646841]), tol), "pinv, numpy")
+        Err(e) -> assert(false, "pinv: " + str(e))
+end svd_of_a_wide_matrix
+
+@test("a rank-deficient matrix has a zero singular value, and its rank by SVD is numpy's")
+svd_of_a_rank_deficient_matrix()
+    var a = rd()
+
+    svd(a) match
+        Ok((u, s, vt)) ->
+            assert(close(s.at(0), 16.84810335261421) && close(s.at(1), 1.0683695145547099), "the two nonzero σ, numpy")
+            assert(s.at(2) <= 0.00000000000001, "the third is zero to rounding")
+            assert(paired(u, vt, 0, Vector.of([0.21483723836839658, 0.5205873894647373, 0.8263375405610781]), Vector.of([0.4796711778777715, 0.5723677939720623, 0.6650644100663531]), tol), "pair 0, numpy")
+            assert(paired(u, vt, 1, Vector.of([-0.8872306883463709, -0.24964395298829709, 0.3879427823697743]), Vector.of([0.7766909903215595, 0.07568647010455815, -0.6253180501124423]), tol), "pair 1, numpy")
+            assert(paired(u, vt, 2, Vector.of([0.40824829046386213, -0.8164965809277263, 0.40824829046386335]), Vector.of([-0.4082482904638627, 0.816496580927726, -0.40824829046386324]), 0.000001), "the null pair, numpy")
+        Err(e) -> assert(false, "svd of a singular 3x3: " + str(e))
+
+    definition(a, tol)
+
+    svd_rank(a) match
+        Ok(r) -> assert_eq(r, 2, "rank 2, numpy")
+        Err(e) -> assert(false, "svd_rank: " + str(e))
+
+    cond(a) match
+        Ok(k) -> assert(k > 10000000000000.0, "cond is enormous or infinite (numpy: 5.05e16)")
+        Err(e) -> assert(false, "cond: " + str(e))
+
+    pinv(a) match
+        Ok(p) -> assert(p.near(Matrix.of(3, 3, [-0.6388888888888886, -0.16666666666666588, 0.3055555555555551, -0.05555555555555532, 0.0, 0.05555555555555543, 0.5277777777777772, 0.16666666666666596, -0.19444444444444392]), tol), "pinv, numpy")
+        Err(e) -> assert(false, "pinv: " + str(e))
+end svd_of_a_rank_deficient_matrix
+
+@test("least squares through pinv agrees with lstsq on a full-rank fit")
+pinv_agrees_with_lstsq()
+    var a = Matrix.of(4, 2, [1.0, 0.0, 1.0, 1.0, 1.0, 2.0, 1.0, 3.0])
+    var b = Vector.of([1.0, 2.9, 5.1, 7.0])
+
+    pinv(a) match
+        Ok(p) ->
+            assert((p * b).near(Vector.of([0.97, 2.02]), tol), "pinv(A) b, numpy")
+
+            lstsq(a, b) match
+                Ok(x) -> assert((p * b).near(x, tol), "the same x as lstsq")
+                Err(e) -> assert(false, "lstsq: " + str(e))
+        Err(e) -> assert(false, "pinv: " + str(e))
+
+// -- edge cases -----------------------------------------------------------------------------------------
+
+@test("a 1x1 matrix is its own singular value, up to sign")
+svd_of_a_1x1()
+    var a = Matrix.of(1, 1, [-3.0])
+
+    svd(a) match
+        Ok((u, s, vt)) ->
+            assert(s.near(Vector.of([3.0]), tol), "σ = 3, numpy")
+            assert(paired(u, vt, 0, Vector.of([-1.0]), Vector.of([1.0]), tol), "U = -1, V = 1, numpy")
+        Err(e) -> assert(false, "svd of a 1x1: " + str(e))
+
+    definition(a, tol)
+
+    pinv(a) match
+        Ok(p) -> assert(close(p.at(0, 0), -1.0 / 3.0), "pinv = -1/3, numpy")
+        Err(e) -> assert(false, "pinv: " + str(e))
+
+@test("a row vector's one singular value is its length")
+svd_of_a_row_vector()
+    var a = Matrix.of(1, 3, [3.0, 0.0, 4.0])
+
+    svd(a) match
+        Ok((u, s, vt)) ->
+            assert(s.near(Vector.of([5.0]), tol), "σ = 5, numpy")
+            assert(paired(u, vt, 0, Vector.of([1.0]), Vector.of([0.6, 0.0, 0.8]), tol), "the direction, numpy")
+        Err(e) -> assert(false, "svd of a row: " + str(e))
+
+    definition(a, tol)
+
+    pinv(a) match
+        Ok(p) -> assert(p.near(Matrix.of(3, 1, [0.12, 0.0, 0.16]), tol), "pinv, numpy")
+        Err(e) -> assert(false, "pinv: " + str(e))
+
+@test("a column vector's one singular value is its length")
+svd_of_a_column_vector()
+    var a = Matrix.of(3, 1, [1.0, 2.0, 2.0])
+
+    svd(a) match
+        Ok((u, s, vt)) ->
+            assert(s.near(Vector.of([3.0]), tol), "σ = 3, numpy")
+            assert(paired(u, vt, 0, Vector.of([0.33333333333333326, 0.6666666666666666, 0.6666666666666666]), Vector.of([1.0]), tol), "the direction, numpy")
+        Err(e) -> assert(false, "svd of a column: " + str(e))
+
+    definition(a, tol)
+
+    pinv(a) match
+        Ok(p) -> assert(p.near(Matrix.of(1, 3, [0.11111111111111108, 0.2222222222222222, 0.2222222222222222]), tol), "pinv, numpy")
+        Err(e) -> assert(false, "pinv: " + str(e))
+
+@test("the zero matrix: every σ is zero, U is still orthonormal, rank 0, cond infinite, pinv zero")
+svd_of_the_zero_matrix()
+    var a: Matrix[real] = Matrix.zeros(2, 3)
+
+    svd(a) match
+        Ok((_, s, _)) -> assert(s.near(Vector.zeros(2), 0.0), "σ = 0, 0")
+        Err(e) -> assert(false, "svd of zero: " + str(e))
+
+    definition(a, tol)
+
+    svd_rank(a) match
+        Ok(r) -> assert_eq(r, 0, "rank 0, numpy")
+        Err(e) -> assert(false, "svd_rank: " + str(e))
+
+    cond(a) match
+        Ok(k) -> assert(k.is_infinite() && k > 0.0, "cond = inf, numpy")
+        Err(e) -> assert(false, "cond: " + str(e))
+
+    pinv(a) match
+        Ok(p) -> assert(p.near(Matrix.zeros(3, 2), 0.0), "pinv = 0, numpy")
+        Err(e) -> assert(false, "pinv: " + str(e))
+end svd_of_the_zero_matrix
+
+@test("a repeated singular value: the simple pair is numpy's, and the definition holds")
+svd_with_a_repeated_value()
+    var a = Matrix.of(3, 3, [2.0, 0.0, 0.0, 0.0, -2.0, 0.0, 0.0, 0.0, 1.0])
+
+    svd(a) match
+        Ok((u, s, vt)) ->
+            assert(s.near(Vector.of([2.0, 2.0, 1.0]), tol), "σ = 2, 2, 1, numpy")
+            assert(paired(u, vt, 2, Vector.of([0.0, 0.0, 1.0]), Vector.of([0.0, 0.0, 1.0]), tol), "the simple pair, numpy")
+        Err(e) -> assert(false, "svd: " + str(e))
+
+    definition(a, tol)
+
+    cond(a) match
+        Ok(k) -> assert(close(k, 2.0), "cond = 2, numpy")
+        Err(e) -> assert(false, "cond: " + str(e))
+
+@test("the same decomposition runs at f32")
+svd_at_f32()
+    var a = Matrix.of(4, 3, [1.0f32, 2.0f32, 3.0f32, 4.0f32, 5.0f32, 6.0f32, 7.0f32, 8.0f32, 10.0f32, 1.0f32, 0.0f32, 1.0f32])
+
+    svd(a) match
+        Ok((u, s, vt)) ->
+            assert(s.near(Vector.of([17.450895f32, 0.9869392f32, 0.70156568f32]), 0.00001), "σ, numpy")
+            assert(paired(u, vt, 0, Vector.of([0.2088294f32, 0.5027074f32, 0.8362243f32, 0.06636682f32]), Vector.of([0.46642852f32, 0.5513178f32, 0.6917319f32]), 0.0001), "pair 0, numpy")
+        Err(e) -> assert(false, "svd at f32: " + str(e))
+
+    definition(a, 0.0001)
+
+    svd_rank(a) match
+        Ok(r) -> assert_eq(r, 3, "rank 3, numpy")
+        Err(e) -> assert(false, "svd_rank at f32: " + str(e))
+
+    cond(a) match
+        Ok(k) -> assert((k - 24.874214f32).norm() <= 0.001, "cond, numpy")
+        Err(e) -> assert(false, "cond at f32: " + str(e))
+end svd_at_f32
+
+// -- refusals -----------------------------------------------------------------------------------------
+
+@test("a nan is never orthogonal, so every SVD route refuses it with NotConverged")
+svd_does_not_converge_on_nan()
+    var nan = real.nan()
+    var a = Matrix.of(2, 2, [1.0, nan, 2.0, 3.0])
+
+    svd(a) match
+        Ok(_) -> assert(false, "svd of a nan converged")
+        Err(e) -> assert_eq(e, NotConverged, "svd")
+
+    singular_values(a) match
+        Ok(_) -> assert(false, "singular_values of a nan converged")
+        Err(e) -> assert_eq(e, NotConverged, "singular_values")
+
+    svd_rank(a) match
+        Ok(_) -> assert(false, "svd_rank of a nan converged")
+        Err(e) -> assert_eq(e, NotConverged, "svd_rank")
+
+    pinv(a) match
+        Ok(_) -> assert(false, "pinv of a nan converged")
+        Err(e) -> assert_eq(e, NotConverged, "pinv")
+
+    cond(a) match
+        Ok(_) -> assert(false, "cond of a nan converged")
+        Err(e) -> assert_eq(e, NotConverged, "cond")
+end svd_does_not_converge_on_nan

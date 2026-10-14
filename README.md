@@ -12,10 +12,14 @@ sh/sysl/linalg/
     bareiss.sysl    fraction-free elimination, for rings whose division cannot be trusted
     factor.sysl     Householder QR, least squares through it, and Cholesky — at real and f32
     eigen.sysl      symmetric eigenvalues and eigenvectors, by cyclic Jacobi — at real and f32
+    svd.sysl        the singular value decomposition, by one-sided Jacobi, and the rank,
+                    pseudo-inverse and condition number read off it — at real and f32
     fail.sysl       what a decomposition refuses, and why
     tests.sysl      what all of it claims, run by `sysl test .`
     tests_factor.sysl   the factorizations, against numpy and against their definitions
     tests_eigen.sysl    the eigenproblem, against numpy and against A v = λ v
+    tests_svd.sysl      the SVD, against numpy and against A = U diag(σ) Vt and Moore-Penrose
+    tests_readme.sysl   every example in this file, printing what this file says it prints
 package.hocon       who this package is, and what it needs of the machine
 ```
 
@@ -41,6 +45,10 @@ solve(a, b) match
     Err(e) -> print(f"no solution: $e")
 ```
 
+```output
+x = (1, 3)
+```
+
 The factorizations take any width `sysl.math.Float` covers — `real` and `f32` — since a reflector's
 length and a Cholesky pivot are square roots, and a rank decision is judged against the width's own
 `epsilon`:
@@ -53,16 +61,23 @@ var a = Matrix.of(4, 2, [1.0, 0.0, 1.0, 1.0, 1.0, 2.0, 1.0, 3.0])
 var y = Vector.of([1.0, 2.9, 5.1, 7.0])
 
 lstsq(a, y) match
-    Ok(c) -> print(f"c = $c")
+    Ok(c) -> print(f"c = ${c}%.6s")
     Err(e) -> print(f"no unique fit: $e")      // RankDeficient, ShapeMismatch
 
 qr(a) match
-    Ok((q, r)) -> print(f"Q = $q\nR = $r")
+    Ok((q, r)) -> print(f"Q = ${q}%.6s\nR = ${r}%.6s")
     Err(e) -> print(f"$e")
 
 cholesky(Matrix.of(2, 2, [4.0, 2.0, 2.0, 3.0])) match
-    Ok(l) -> print(f"L = $l")
+    Ok(l) -> print(f"L = ${l}%.6s")
     Err(e) -> print(f"$e")                     // NotSymmetric, NotPositiveDefinite, NotSquare
+```
+
+```output
+c = (0.97, 2.02)
+Q = (-0.5, 0.67082); (-0.5, 0.223607); (-0.5, -0.223607); (-0.5, -0.67082)
+R = (-2, -3); (0, -2.23607)
+L = (2, 0); (1, 1.41421)
 ```
 
 A symmetric matrix's eigenvalues come back ascending, with the eigenvectors as the columns of an
@@ -74,13 +89,66 @@ import sh.sysl.linalg.{Matrix, eigh, eigvalsh}
 var a = Matrix.of(3, 3, [2.0, 1.0, 1.0, 1.0, 2.0, 1.0, 1.0, 1.0, 2.0])
 
 eigh(a) match
-    Ok((values, vectors)) -> print(f"λ = $values\nV = $vectors")    // λ = 1, 1, 4
+    Ok((values, vectors)) -> print(f"λ = ${values}%.6s\nV = ${vectors}%.6s")
     Err(e) -> print(f"$e")                     // NotSymmetric, NotSquare, NotConverged
 
 eigvalsh(a) match
-    Ok(values) -> print(f"λ = $values")
+    Ok(values) -> print(f"λ = ${values}%.6s")
     Err(e) -> print(f"$e")
 ```
+
+```output
+λ = (1, 1, 4)
+V = (0.707107, -0.408248, 0.57735); (-0.707107, -0.408248, 0.57735); (0, 0.816497, 0.57735)
+λ = (1, 1, 4)
+```
+
+Any matrix, tall or wide, has a singular value decomposition `A = U diag(σ) Vt` — the thin one, with
+`min(m, n)` values in descending order. `singular_values` answers them alone, and the rank, the
+pseudo-inverse and the condition number are read off them:
+
+```
+import sh.sysl.linalg.{Matrix, svd, singular_values, svd_rank, pinv, cond}
+
+var a = Matrix.of(2, 3, [3.0, 2.0, 2.0, 2.0, 3.0, -2.0])
+
+svd(a) match
+    Ok((u, s, vt)) -> print(f"σ = ${s}%.6s\nU = ${u}%.6s\nVt = ${vt}%.6s")
+    Err(e) -> print(f"$e")                     // NotConverged
+
+singular_values(a) match
+    Ok(s) -> print(f"σ = ${s}%.6s")
+    Err(e) -> print(f"$e")
+
+// The second row is twice the first: rank 1, and no finite condition number.
+var b = Matrix.of(2, 2, [1.0, 2.0, 2.0, 4.0])
+
+svd_rank(b) match
+    Ok(r) -> print(f"rank = $r")
+    Err(e) -> print(f"$e")
+
+cond(b) match
+    Ok(k) -> print(f"cond = $k")
+    Err(e) -> print(f"$e")
+
+pinv(b) match
+    Ok(p) -> print(f"pinv = $p")
+    Err(e) -> print(f"$e")
+```
+
+```output
+σ = (5, 3)
+U = (0.707107, 0.707107); (0.707107, -0.707107)
+Vt = (0.707107, 0.707107, 0); (0.235702, -0.235702, 0.942809)
+σ = (5, 3)
+rank = 1
+cond = inf
+pinv = (0.04, 0.08); (0.08, 0.16)
+```
+
+A sign of a column of `U`, paired with the same row of `Vt`, is not normalized — another
+implementation may print both negated. Every block above, with the output under it, is a test in
+`tests_readme.sysl`.
 
 ## One body per operation, not one per element type
 

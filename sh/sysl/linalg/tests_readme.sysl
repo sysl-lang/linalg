@@ -1,0 +1,73 @@
+module sh.sysl.linalg
+@tests
+
+// Every example in README.md, run. Each test is one block's body with each `print(...)` replaced by
+// an `assert_eq` of the same `f"..."` against the line the README's `output` block shows under it, so
+// an example that stops compiling, or starts printing something else, fails here rather than being
+// found by a reader.
+
+@test("README: solve")
+readme_solve()
+    var a = Matrix.of(2, 2, [2.0, 1.0, 1.0, 3.0])
+    var b = Vector.of([5.0, 10.0])
+
+    solve(a, b) match
+        Ok(x) -> assert_eq(f"x = $x", "x = (1, 3)", "x")
+        Err(e) -> assert(false, f"no solution: $e")
+
+@test("README: least squares, QR and Cholesky")
+readme_factorizations()
+    var a = Matrix.of(4, 2, [1.0, 0.0, 1.0, 1.0, 1.0, 2.0, 1.0, 3.0])
+    var y = Vector.of([1.0, 2.9, 5.1, 7.0])
+
+    lstsq(a, y) match
+        Ok(c) -> assert_eq(f"c = ${c}%.6s", "c = (0.97, 2.02)", "c")
+        Err(e) -> assert(false, f"no unique fit: $e")
+
+    qr(a) match
+        Ok((q, r)) -> assert_eq(f"Q = ${q}%.6s\nR = ${r}%.6s", "Q = (-0.5, 0.67082); (-0.5, 0.223607); (-0.5, -0.223607); (-0.5, -0.67082)\nR = (-2, -3); (0, -2.23607)", "Q and R")
+        Err(e) -> assert(false, f"$e")
+
+    cholesky(Matrix.of(2, 2, [4.0, 2.0, 2.0, 3.0])) match
+        Ok(l) -> assert_eq(f"L = ${l}%.6s", "L = (2, 0); (1, 1.41421)", "L")
+        Err(e) -> assert(false, f"$e")
+end readme_factorizations
+
+@test("README: the symmetric eigenproblem")
+readme_eigen()
+    var a = Matrix.of(3, 3, [2.0, 1.0, 1.0, 1.0, 2.0, 1.0, 1.0, 1.0, 2.0])
+
+    eigh(a) match
+        Ok((values, vectors)) -> assert_eq(f"λ = ${values}%.6s\nV = ${vectors}%.6s", "λ = (1, 1, 4)\nV = (0.707107, -0.408248, 0.57735); (-0.707107, -0.408248, 0.57735); (0, 0.816497, 0.57735)", "λ and V")
+        Err(e) -> assert(false, f"$e")
+
+    eigvalsh(a) match
+        Ok(values) -> assert_eq(f"λ = ${values}%.6s", "λ = (1, 1, 4)", "λ alone")
+        Err(e) -> assert(false, f"$e")
+
+@test("README: the singular value decomposition")
+readme_svd()
+    var a = Matrix.of(2, 3, [3.0, 2.0, 2.0, 2.0, 3.0, -2.0])
+
+    svd(a) match
+        Ok((u, s, vt)) -> assert_eq(f"σ = ${s}%.6s\nU = ${u}%.6s\nVt = ${vt}%.6s", "σ = (5, 3)\nU = (0.707107, 0.707107); (0.707107, -0.707107)\nVt = (0.707107, 0.707107, 0); (0.235702, -0.235702, 0.942809)", "σ, U and Vt")
+        Err(e) -> assert(false, f"$e")
+
+    singular_values(a) match
+        Ok(s) -> assert_eq(f"σ = ${s}%.6s", "σ = (5, 3)", "σ alone")
+        Err(e) -> assert(false, f"$e")
+
+    var b = Matrix.of(2, 2, [1.0, 2.0, 2.0, 4.0])
+
+    svd_rank(b) match
+        Ok(r) -> assert_eq(f"rank = $r", "rank = 1", "rank")
+        Err(e) -> assert(false, f"$e")
+
+    cond(b) match
+        Ok(k) -> assert_eq(f"cond = $k", "cond = inf", "cond")
+        Err(e) -> assert(false, f"$e")
+
+    pinv(b) match
+        Ok(p) -> assert_eq(f"pinv = $p", "pinv = (0.04, 0.08); (0.08, 0.16)", "pinv")
+        Err(e) -> assert(false, f"$e")
+end readme_svd

@@ -1,0 +1,259 @@
+module sh.sysl.linalg
+
+/** The singular value decomposition, by one-sided Jacobi (Hestenes), and what it answers: the
+ * singular values, the numerical rank, the pseudo-inverse and the condition number.
+ *
+ * **One-sided Jacobi, for the reason `eigen.sysl` chose two-sided Jacobi.** Rather than form `AᵀA` --
+ * which squares the condition number and loses every singular value below `sqrt(epsilon)` of the
+ * largest -- the columns of a working copy of `A` are rotated in pairs until each pair is orthogonal to
+ * within rounding of its own two lengths. The rotations are orthogonal by construction and accumulate
+ * into `V`; the column lengths are then the singular values and the normalized columns are `U`. The
+ * test is relative to the pair, so a graded matrix keeps its small singular values to relative
+ * precision, which bidiagonalization judged against the largest cell does not promise. The price is
+ * the same as there: several `O(m n²)` sweeps where Golub-Kahan needs one reduction.
+ *
+ * The bound is `factor.sysl`'s: a column length is a square root, the threshold is the width's own
+ * `epsilon`, and the values are sorted.
+ */
+
+import sysl.math.Float
+
+/** How many sweeps over every pair of columns before the iteration gives up. As for the eigenproblem,
+ * finite input settles in well under a dozen; a `nan` never makes a pair orthogonal.
+ */
+private const max_sweeps: int = 64
+
+/** The thin SVD of an `m x n` matrix: `A = U diag(σ) Vt`, with `k = min(m, n)`, `U` an `m x k` matrix
+ * with orthonormal columns, `σ` the `k` singular values in descending order, and `Vt` a `k x n` matrix
+ * with orthonormal rows.
+ *
+ * **Signs are not normalized**: negating column `j` of `U` together with row `j` of `Vt` answers the
+ * same factorization, and where a singular value is repeated only the pair of subspaces is determined.
+ * Where `A` is rank-deficient, the columns of `U` belonging to a zero singular value are completed to an
+ * orthonormal set, so `UᵀU = I` holds whatever the rank. A wide matrix is factored through its
+ * transpose.
+ */
+svd[T: Field + Float](a: Matrix[T]) -> Result[(Matrix[T], Vector[T], Matrix[T]), Fail]
+    if a.rows < a.cols
+        val (u, s, vt) = tall(a.transpose(), true)?
+
+        return Ok((vt.transpose(), s, u.transpose()))
+
+    val (u, s, vt) = tall(a, true)?
+
+    Ok((u, s, vt))
+
+/** The singular values of `a` in descending order -- the same rotations, with neither `U` nor `V`
+ * accumulated.
+ */
+singular_values[T: Field + Float](a: Matrix[T]) -> Result[Vector[T], Fail]
+    val (_, s, _) = tall(if a.rows < a.cols then a.transpose() else a, false)?
+
+    Ok(s)
+
+/** The numerical rank: how many singular values exceed `σ_max * max(m, n) * epsilon`, numpy's
+ * `matrix_rank` tolerance. Named apart from `gauss.sysl`'s `rank`, which counts the pivots of an
+ * elimination and is exact over an exact field -- this one is a judgement about rounding, and the two
+ * can disagree on a matrix that is singular only to within it.
+ */
+svd_rank[T: Field + Float](a: Matrix[T]) -> Result[int, Fail]
+    var s = singular_values(a)?
+
+    if s.n == 0 then return Ok(0)
+
+    var tol = s.at(0) * T(if a.rows > a.cols then a.rows else a.cols) * T.epsilon()
+    var r = 0
+
+    for i in 0..<s.n
+        if s.at(i) > tol then r += 1
+
+    Ok(r)
+
+/** The Moore-Penrose pseudo-inverse, `n x m`: `V diag(1/σ) Uᵀ`, with every singular value at or below
+ * `σ_max * max(m, n) * epsilon` treated as zero and left out -- numpy's `pinv(a, rtol=None)`, the
+ * cutoff that scales with the width (its legacy default, a fixed `1e-15`, means nothing at `f32`). It
+ * is the one `svd_rank` counts by, so `pinv` inverts exactly the part of `A` that `svd_rank` says is
+ * there.
+ */
+pinv[T: Field + Float](a: Matrix[T]) -> Result[Matrix[T], Fail]
+    val (u, s, vt) = svd(a)?
+    var p: Matrix[T] = Matrix.zeros(a.cols, a.rows)
+
+    if s.n == 0 then return Ok(p)
+
+    var tol = s.at(0) * T(if a.rows > a.cols then a.rows else a.cols) * T.epsilon()
+
+    for l in 0..<s.n
+        if s.at(l) > tol
+            var inv = T.one() / s.at(l)
+
+            for i in 0..<a.cols
+                var x = vt.at(l, i) * inv
+
+                for j in 0..<a.rows do p.set(i, j, p.at(i, j) + x * u.at(j, l))
+
+    Ok(p)
+end pinv
+
+/** The 2-norm condition number, `σ_max / σ_min` over the `min(m, n)` singular values -- and
+ * `infinity` when the smallest is zero, the zero matrix included, as numpy answers.
+ */
+cond[T: Field + Float](a: Matrix[T]) -> Result[T, Fail]
+    var s = singular_values(a)?
+
+    if s.n == 0 || s.at(s.n - 1) == T.zero() then return Ok(T.infinity())
+
+    Ok(s.at(0) / s.at(s.n - 1))
+
+/** The SVD of a matrix with at least as many rows as columns, with `U` and `Vt` only when `want`. */
+private tall[T: Field + Float](a: Matrix[T], want: bool) -> Result[(Matrix[T], Vector[T], Matrix[T]), Fail]
+    var n = a.cols
+    var w = a.copy()
+    var v: Matrix[T] = if want then Matrix.identity(n) else Matrix.zeros(0, 0)
+    var sweeps = 0
+
+    loop
+        var rotated = false
+
+        for p in 0..<n
+            for q in p + 1..<n
+                if orthogonalize(w, v, want, p, q) then rotated = true
+
+        if !rotated then break
+
+        sweeps += 1
+
+        if sweeps == max_sweeps then return Err(NotConverged)
+
+    var s: Vector[T] = Vector.zeros(n)
+
+    for j in 0..<n
+        var len = T.zero()
+
+        for i in 0..<w.rows do len = len.hypot(w.at(i, j))
+
+        s.set(j, len)
+
+    descending(s, w, v, want)
+
+    if !want then return Ok((w, s, v))
+
+    for j in 0..<n
+        if s.at(j) > T.zero()
+            var inv = T.one() / s.at(j)
+
+            for i in 0..<w.rows do w.set(i, j, w.at(i, j) * inv)
+        else
+            complete(w, j)
+
+    Ok((w, s, v.transpose()))
+end tall
+
+/** One Hestenes rotation of columns `p` and `q` of `w` (and of `v`, when `want`), making them
+ * orthogonal, or nothing when they already are -- and whether it rotated.
+ *
+ * **Orthogonal is relative to the pair's own lengths**: `|w_p · w_q| <= sqrt(m) epsilon |w_p| |w_q|`,
+ * LAPACK's `gesvj` threshold. The `sqrt(m)` is the rounding a dot product of `m` terms commits, so a
+ * stricter test would chase noise; a pair that small rotates each column by less than a rounding. The
+ * comparison is written so that a `nan` is never orthogonal.
+ *
+ * The angle is the one `eigen.sysl`'s `rotate` takes, on the 2 x 2 Gram matrix of the pair.
+ */
+private orthogonalize[T: Field + Float](w: Matrix[T], v: Matrix[T], want: bool, p: int, q: int) -> bool
+    var alpha = T.zero()
+    var beta = T.zero()
+    var gamma = T.zero()
+
+    for i in 0..<w.rows
+        var x = w.at(i, p)
+        var y = w.at(i, q)
+
+        alpha += x * x
+        beta += y * y
+        gamma += x * y
+
+    if gamma.abs() <= T(w.rows).sqrt() * T.epsilon() * alpha.sqrt() * beta.sqrt() then return false
+
+    var zeta = (beta - alpha) / (T(2) * gamma)
+    var t = T.one().copysign(zeta) / (zeta.abs() + zeta.hypot(T.one()))
+    var c = T.one() / t.hypot(T.one())
+    var s = t * c
+
+    for i in 0..<w.rows
+        var x = w.at(i, p)
+        var y = w.at(i, q)
+
+        w.set(i, p, c * x - s * y)
+        w.set(i, q, s * x + c * y)
+
+    if want
+        for i in 0..<v.rows
+            var x = v.at(i, p)
+            var y = v.at(i, q)
+
+            v.set(i, p, c * x - s * y)
+            v.set(i, q, s * x + c * y)
+
+    true
+end orthogonalize
+
+/** Sorts `s` descending in place, moving the matching columns of `w` and of `v` with them. */
+private descending[T: Field + Float](s: Vector[T], w: Matrix[T], v: Matrix[T], want: bool)
+    for i in 0..<s.n
+        var high = i
+
+        for j in i + 1..<s.n
+            if s.at(j) > s.at(high) then high = j
+
+        if high != i
+            var x = s.at(i)
+
+            s.set(i, s.at(high))
+            s.set(high, x)
+
+            if want
+                swap_cols(w, i, high)
+                swap_cols(v, i, high)
+end descending
+
+private swap_cols[T: Field + Float](m: Matrix[T], a: int, b: int)
+    for k in 0..<m.rows
+        var y = m.at(k, a)
+
+        m.set(k, a, m.at(k, b))
+        m.set(k, b, y)
+
+/** Overwrites column `j` of `u` with a unit vector orthogonal to columns `0..<j`, which are
+ * orthonormal: the coordinate axis that keeps the most of its length once those are projected out,
+ * projected twice so the result is orthogonal to rounding. Some axis keeps at least
+ * `sqrt((m - j) / m)`, so the division is by a length bounded away from zero.
+ */
+private complete[T: Field + Float](u: Matrix[T], j: int)
+    var best: Vector[T] = Vector.zeros(u.rows)
+    var best_len = T.zero()
+
+    for e in 0..<u.rows
+        var r: Vector[T] = Vector.basis(u.rows, e)
+
+        project_out(r, u, j)
+        project_out(r, u, j)
+
+        var len = T.zero()
+
+        for i in 0..<r.n do len = len.hypot(r.at(i))
+
+        if len > best_len
+            best = r
+            best_len = len
+
+    for i in 0..<u.rows do u.set(i, j, best.at(i) / best_len)
+end complete
+
+/** `r -= Σ (u_c · r) u_c` over the first `j` columns of `u`. */
+private project_out[T: Field + Float](r: Vector[T], u: Matrix[T], j: int)
+    for c in 0..<j
+        var d = T.zero()
+
+        for i in 0..<r.n do d += u.at(i, c) * r.at(i)
+
+        for i in 0..<r.n do r.set(i, r.at(i) - d * u.at(i, c))
