@@ -1,15 +1,26 @@
 module sh.sysl.linalg
 
-/** How an elimination can fail to answer the question it was asked.
+/** How an elimination or a factorization can fail to answer the question it was asked.
  *
- * Three distinct causes, because a caller can act differently on each: a shape is a programming
- * mistake, and a singular matrix is a fact about the numbers. Both eliminations answer with this one,
- * so a caller that switches from `solve` to `solve_exact` keeps its error handling.
+ * Distinct causes, because a caller can act differently on each: a shape is a programming mistake,
+ * and a singular, rank-deficient or indefinite matrix is a fact about the numbers. Every routine in
+ * the module answers with this one, so a caller that switches from `solve` to `solve_exact` -- or
+ * from `solve` to `lstsq` -- keeps its error handling.
  */
 enum Fail
     NotSquare
     ShapeMismatch
     Singular
+    /** Least squares has no unique answer: some column of the matrix is, to within rounding, a
+     * combination of the others, so a whole line of vectors fits equally well.
+     */
+    RankDeficient
+    /** Cholesky was handed a matrix that is not its own transpose. */
+    NotSymmetric
+    /** Cholesky was handed a symmetric matrix with a pivot that is not positive: some vector `x`
+     * makes `xᵀ A x` zero or negative, and no real `L` has `L Lᵀ` equal to it.
+     */
+    NotPositiveDefinite
 
 /** The rendering, so that a refusal can be printed without matching on it -- and so that a
  * `Result[Vector[T], Fail]` prints as a whole, since `Result` renders both arms through theirs.
@@ -25,6 +36,9 @@ impl Display for Fail
             NotSquare -> "the matrix is not square"
             ShapeMismatch -> "the shapes do not agree"
             Singular -> "the matrix is singular"
+            RankDeficient -> "the matrix is rank-deficient"
+            NotSymmetric -> "the matrix is not symmetric"
+            NotPositiveDefinite -> "the matrix is not positive definite"
 
         display_str(text, out, fmt)
     end display

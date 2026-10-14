@@ -1,0 +1,263 @@
+module sh.sysl.linalg
+@tests
+
+import sysl.math.Float
+
+// What `factor.sysl` computes: Householder QR, least squares through it, and Cholesky.
+//
+// **Every expected number below was computed by numpy** (`numpy.linalg.qr`, `lstsq`, `cholesky`,
+// `matrix_rank`) and is written in with the tolerance it is compared at. numpy is an independent
+// implementation -- LAPACK's reflectors, not these -- which is what makes it an oracle rather than a
+// second copy of the same arithmetic. Two implementations of QR may disagree on the sign of each
+// column of `Q` and the matching row of `R`, so a diagonal of `R` is compared by its size.
+//
+// Each factorization is also checked against its definition, which needs no oracle at all: `Q R`
+// gives back `A`, `Q` has orthonormal columns, `R` and `L` are triangular, `L Lᵀ` gives back `A`, and
+// a least-squares residual is orthogonal to every column of `A`.
+
+private const eps: real = 0.000000001
+
+private same[T: Scalar](a: T, b: T) -> bool = (a - b).norm() <= eps
+
+/** Every cell strictly below the diagonal is zero -- exactly, since the routines write those cells
+ * as zeros rather than computing them.
+ */
+private upper[T: Scalar](m: Matrix[T]) -> bool
+    for i in 0..<m.rows
+        for j in 0..<i
+            if m.at(i, j) != T.zero() then return false
+
+    true
+
+private orthonormal[T: Scalar](q: Matrix[T], tol: real) -> bool = (q.transpose() * q).near(Matrix.identity(q.cols), tol)
+
+// Overdetermined, full rank, and with no structure to make it easy.
+private tall() -> Matrix[real] = Matrix.of(4, 3, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0, 1.0, 0.0, 1.0])
+
+private square() -> Matrix[real] = Matrix.of(3, 3, [2.0, 1.0, -1.0, -3.0, -1.0, 2.0, -2.0, 1.0, 2.0])
+
+// -- Householder QR ----------------------------------------------------------------------------------
+
+@test("QR of a tall matrix agrees with numpy and with its definition")
+qr_of_a_tall_matrix()
+    var a = tall()
+
+    qr(a) match
+        Ok((q, r)) ->
+            assert(q.rows == 4 && q.cols == 3 && r.rows == 3 && r.cols == 3, "the reduced shapes")
+            assert((q * r).near(a, eps), "Q R gives A back")
+            assert(orthonormal(q, eps), "Q's columns are orthonormal")
+            assert(upper(r), "R is upper triangular")
+            assert(same(r.at(0, 0).abs(), 8.18535277187245), "|R00|, numpy")
+            assert(same(r.at(1, 1).abs(), 1.481225793303057), "|R11|, numpy")
+            assert(same(r.at(2, 2).abs(), 0.9965928350693488), "|R22|, numpy")
+        Err(e) -> assert(false, "QR of a tall matrix: " + str(e))
+end qr_of_a_tall_matrix
+
+@test("QR of a square matrix agrees with numpy and with its definition")
+qr_of_a_square_matrix()
+    var a = square()
+
+    qr(a) match
+        Ok((q, r)) ->
+            assert((q * r).near(a, eps), "Q R gives A back")
+            assert(orthonormal(q, eps), "Q is orthogonal")
+            assert(upper(r), "R is upper triangular")
+            assert(same(r.at(0, 0).abs(), 4.123105625617661), "|R00|, numpy")
+            assert(same(r.at(1, 1).abs(), 1.5718104959867516), "|R11|, numpy")
+            assert(same(r.at(2, 2).abs(), 0.15430334996209208), "|R22|, numpy")
+        Err(e) -> assert(false, "QR of a square matrix: " + str(e))
+end qr_of_a_square_matrix
+
+@test("QR of a 1x1 matrix is a sign and a size")
+qr_of_one_by_one()
+    var a = Matrix.of(1, 1, [-3.0])
+
+    qr(a) match
+        Ok((q, r)) ->
+            assert(same(q.at(0, 0).abs(), 1.0), "Q is plus or minus one")
+            assert(same(r.at(0, 0).abs(), 3.0), "|R| is the size of the cell")
+            assert((q * r).near(a, eps), "and the product is the cell")
+        Err(e) -> assert(false, "QR of a 1x1 matrix: " + str(e))
+end qr_of_one_by_one
+
+// A column with nothing in it gives its reflector nothing to reflect; the reflection is skipped
+// rather than divided by a zero length, and R's diagonal records the zero numpy records.
+@test("a zero column passes through QR")
+qr_of_a_zero_column()
+    var a = Matrix.of(3, 2, [1.0, 0.0, 2.0, 0.0, 3.0, 0.0])
+
+    qr(a) match
+        Ok((q, r)) ->
+            assert((q * r).near(a, eps), "Q R gives A back")
+            assert(orthonormal(q, eps), "Q is still orthonormal")
+            assert(same(r.at(0, 0).abs(), 3.7416573867739418), "|R00|, numpy")
+            assert(same(r.at(1, 1), 0.0), "and R11 is zero, as numpy's is")
+            assert(same(r.at(0, 1), 0.0), "with nothing above it either")
+        Err(e) -> assert(false, "a zero column passes through QR: " + str(e))
+end qr_of_a_zero_column
+
+@test("QR refuses a matrix wider than it is tall")
+qr_refuses_a_wide_matrix()
+    qr(Matrix.of(2, 3, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0])) match
+        Ok(_) -> assert(false, "QR refuses a matrix wider than it is tall")
+        Err(e) -> assert_eq(e, ShapeMismatch, "and says which")
+
+@test("QR leaves the matrix it was given alone")
+qr_does_not_consume()
+    var a = tall()
+    var before = a.copy()
+
+    qr(a) match
+        Ok(_) -> assert(a == before, "every cell where it was")
+        Err(e) -> assert(false, "QR leaves the matrix alone: " + str(e))
+
+// -- least squares -----------------------------------------------------------------------------------
+
+@test("least squares agrees with numpy, and its residual is orthogonal to the columns")
+least_squares_overdetermined()
+    var a = tall()
+    var b = Vector.of([1.0, 2.0, 3.0, 4.0])
+
+    lstsq(a, b) match
+        Ok(x) ->
+            assert(x.near(Vector.of([1.328767123287668, -3.7260273972602764, 2.404109589041101]), eps), "x, numpy")
+            assert((a.transpose() * (a * x - b)).near(Vector.zeros(3), eps), "Aᵀ (A x - b) is zero")
+        Err(e) -> assert(false, "least squares, overdetermined: " + str(e))
+end least_squares_overdetermined
+
+@test("least squares on a square system is the elimination's solution")
+least_squares_square()
+    var a = square()
+    var b = Vector.of([8.0, -11.0, -3.0])
+
+    lstsq(a, b) match
+        Ok(x) -> assert(x.near(Vector.of([2.0, 3.0, -1.0]), eps), "the one exact solution")
+        Err(e) -> assert(false, "least squares, square: " + str(e))
+
+// Condition number about 4e10: numpy calls it rank 2 and solves it, and so does this. The two answers
+// are near 1e10 and can agree only to the condition number times epsilon, so they are compared
+// relatively.
+@test("a nearly singular system still solves, as numpy's does")
+least_squares_nearly_singular()
+    var a = Matrix.of(3, 2, [1.0, 1.0, 1.0, 1.0 + 0.0000000001, 1.0, 1.0])
+    var expect = Vector.of([-10000001001.95135, 10000001003.95135])
+
+    lstsq(a, Vector.of([2.0, 3.0, 2.0])) match
+        Ok(x) -> assert((x - expect).len() <= 0.00001 * expect.len(), "x, numpy, to the conditioning")
+        Err(e) -> assert(false, "a nearly singular system: " + str(e))
+
+// Two ulps from singular is below numpy's threshold, `epsilon * max(m, n) * largest`: numpy reports
+// rank 1 and returns one of the minimisers; this refuses, since it promises a unique answer.
+@test("a system singular to within rounding is rank-deficient, as numpy says")
+least_squares_singular_to_rounding()
+    var a = Matrix.of(3, 2, [1.0, 1.0, 1.0, 1.0 + 0.0000000000000004, 1.0, 1.0])
+
+    lstsq(a, Vector.of([2.0, 3.0, 2.0])) match
+        Ok(_) -> assert(false, "a system singular to within rounding is refused")
+        Err(e) -> assert_eq(e, RankDeficient, "and says which")
+
+@test("a zero column is rank deficiency")
+least_squares_zero_column()
+    lstsq(Matrix.of(3, 2, [1.0, 0.0, 2.0, 0.0, 3.0, 0.0]), Vector.of([1.0, 2.0, 3.0])) match
+        Ok(_) -> assert(false, "a zero column is refused")
+        Err(e) -> assert_eq(e, RankDeficient, "and says which")
+
+@test("an underdetermined system is rank deficiency")
+least_squares_wide()
+    lstsq(Matrix.of(2, 3, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]), Vector.of([1.0, 2.0])) match
+        Ok(_) -> assert(false, "a wide system is refused")
+        Err(e) -> assert_eq(e, RankDeficient, "and says which")
+
+@test("least squares refuses a right-hand side of the wrong length")
+least_squares_wrong_length()
+    lstsq(tall(), Vector.of([1.0, 2.0, 3.0])) match
+        Ok(_) -> assert(false, "a right-hand side of the wrong length is refused")
+        Err(e) -> assert_eq(e, ShapeMismatch, "and says which")
+
+// -- Cholesky ----------------------------------------------------------------------------------------
+
+@test("Cholesky agrees with numpy and with its definition")
+cholesky_of_a_textbook_matrix()
+    var a = Matrix.of(3, 3, [4.0, 12.0, -16.0, 12.0, 37.0, -43.0, -16.0, -43.0, 98.0])
+
+    cholesky(a) match
+        Ok(l) ->
+            assert(l.near(Matrix.of(3, 3, [2.0, 0.0, 0.0, 6.0, 1.0, 0.0, -8.0, 5.0, 3.0]), eps), "L, numpy")
+            assert(upper(l.transpose()), "L is lower triangular")
+            assert((l * l.transpose()).near(a, eps), "L Lᵀ gives A back")
+        Err(e) -> assert(false, "Cholesky of a textbook matrix: " + str(e))
+end cholesky_of_a_textbook_matrix
+
+// `Mᵀ M + I` is positive definite for every `M`, and symmetric only to within rounding once it has
+// been through a product -- which is the case the tolerance in the symmetry check is for.
+@test("Cholesky of a Gram matrix")
+cholesky_of_a_gram_matrix()
+    var m = tall()
+    var a = m.transpose() * m + Matrix.identity(3)
+
+    cholesky(a) match
+        Ok(l) ->
+            assert(l.at(0, 0) > 0.0 && l.at(1, 1) > 0.0 && l.at(2, 2) > 0.0, "a positive diagonal")
+            assert((l * l.transpose()).near(a, eps), "L Lᵀ gives A back")
+        Err(e) -> assert(false, "Cholesky of a Gram matrix: " + str(e))
+
+@test("Cholesky of a 1x1 matrix is its root")
+cholesky_of_one_by_one()
+    cholesky(Matrix.of(1, 1, [9.0])) match
+        Ok(l) -> assert(same(l.at(0, 0), 3.0), "the square root")
+        Err(e) -> assert(false, "Cholesky of a 1x1 matrix: " + str(e))
+
+// numpy: `LinAlgError: Matrix is not positive definite`.
+@test("Cholesky refuses an indefinite matrix")
+cholesky_refuses_indefinite()
+    cholesky(Matrix.of(2, 2, [1.0, 2.0, 2.0, 1.0])) match
+        Ok(_) -> assert(false, "an indefinite matrix is refused")
+        Err(e) -> assert_eq(e, NotPositiveDefinite, "and says which")
+
+@test("Cholesky refuses a semi-definite matrix")
+cholesky_refuses_semidefinite()
+    cholesky(Matrix.of(2, 2, [1.0, 1.0, 1.0, 1.0])) match
+        Ok(_) -> assert(false, "a singular matrix is refused")
+        Err(e) -> assert_eq(e, NotPositiveDefinite, "and says which")
+
+@test("Cholesky refuses a matrix that is not symmetric")
+cholesky_refuses_asymmetric()
+    cholesky(Matrix.of(2, 2, [4.0, 1.0, 2.0, 3.0])) match
+        Ok(_) -> assert(false, "an asymmetric matrix is refused")
+        Err(e) -> assert_eq(e, NotSymmetric, "and says which")
+
+@test("Cholesky refuses a matrix that is not square")
+cholesky_refuses_non_square()
+    cholesky(Matrix.of(2, 3, [1.0, 0.0, 0.0, 0.0, 1.0, 0.0])) match
+        Ok(_) -> assert(false, "a non-square matrix is refused")
+        Err(e) -> assert_eq(e, NotSquare, "and says which")
+
+// -- at f32 ------------------------------------------------------------------------------------------
+
+@test("the same factorizations run at f32")
+factorizations_at_f32()
+    var a = Matrix.of(2, 2, [3.0f32, 1.0f32, 4.0f32, 2.0f32])
+
+    qr(a) match
+        Ok((q, r)) ->
+            assert((q * r).near(a, 0.00001), "Q R gives A back")
+            assert(orthonormal(q, 0.00001), "Q is orthogonal")
+            assert((r.at(0, 0).abs() - 5.0f32).norm() <= 0.00001, "|R00|, numpy")
+            assert((r.at(1, 1).abs() - 0.4f32).norm() <= 0.00001, "|R11|, numpy")
+        Err(e) -> assert(false, "QR at f32: " + str(e))
+
+    cholesky(Matrix.of(2, 2, [4.0f32, 2.0f32, 2.0f32, 3.0f32])) match
+        Ok(l) -> assert(l.near(Matrix.of(2, 2, [2.0f32, 0.0f32, 1.0f32, 1.4142135f32]), 0.00001), "L, numpy")
+        Err(e) -> assert(false, "Cholesky at f32: " + str(e))
+
+    lstsq(a, Vector.of([5.0f32, 10.0f32])) match
+        Ok(x) -> assert((a * x).near(Vector.of([5.0f32, 10.0f32]), 0.0001), "and least squares, square")
+        Err(e) -> assert(false, "least squares at f32: " + str(e))
+end factorizations_at_f32
+
+@test("the new refusals render")
+the_new_refusals_render()
+    assert_eq(str(RankDeficient), "the matrix is rank-deficient", "rank deficiency")
+    assert_eq(str(NotSymmetric), "the matrix is not symmetric", "asymmetry")
+    assert_eq(str(NotPositiveDefinite), "the matrix is not positive definite", "indefiniteness")

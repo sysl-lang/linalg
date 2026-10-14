@@ -10,8 +10,10 @@ sh/sysl/linalg/
     scalar.sysl     what a cell has to be — and the one promise no signature can carry
     gauss.sysl      elimination with partial pivoting: solve, det, rank, inverse
     bareiss.sysl    fraction-free elimination, for rings whose division cannot be trusted
+    factor.sysl     Householder QR, least squares through it, and Cholesky — at real and f32
     fail.sysl       what a decomposition refuses, and why
     tests.sysl      what all of it claims, run by `sysl test .`
+    tests_factor.sysl   the factorizations, against numpy and against their definitions
 package.hocon       who this package is, and what it needs of the machine
 ```
 
@@ -34,7 +36,31 @@ var b = Vector.of([5.0, 10.0])
 
 solve(a, b) match
     Ok(x) -> print(f"x = $x")
-    Err(e) -> print(f"no solution: ${e.describe()}")
+    Err(e) -> print(f"no solution: $e")
+```
+
+The factorizations take any width `sysl.math.Float` covers — `real` and `f32` — since a reflector's
+length and a Cholesky pivot are square roots, and a rank decision is judged against the width's own
+`epsilon`:
+
+```
+import sh.sysl.linalg.{Matrix, Vector, qr, lstsq, cholesky}
+
+// Fit a line y = c0 + c1 t through four points, which no line passes through exactly.
+var a = Matrix.of(4, 2, [1.0, 0.0, 1.0, 1.0, 1.0, 2.0, 1.0, 3.0])
+var y = Vector.of([1.0, 2.9, 5.1, 7.0])
+
+lstsq(a, y) match
+    Ok(c) -> print(f"c = $c")
+    Err(e) -> print(f"no unique fit: $e")      // RankDeficient, ShapeMismatch
+
+qr(a) match
+    Ok((q, r)) -> print(f"Q = $q\nR = $r")
+    Err(e) -> print(f"$e")
+
+cholesky(Matrix.of(2, 2, [4.0, 2.0, 2.0, 3.0])) match
+    Ok(l) -> print(f"L = $l")
+    Err(e) -> print(f"$e")                     // NotSymmetric, NotPositiveDefinite, NotSquare
 ```
 
 ## One body per operation, not one per element type

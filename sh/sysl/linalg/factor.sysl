@@ -1,0 +1,191 @@
+module sh.sysl.linalg
+
+/** Orthogonal and triangular factorizations over the floating-point widths: Householder QR, least
+ * squares through it, and Cholesky.
+ *
+ * **The bound is `Field + Float`, and `Float` is the half that `gauss.sysl` never needed.** An
+ * elimination only adds, multiplies, divides and compares sizes; a factorization takes square roots
+ * -- a reflector's length, a Cholesky pivot -- and judges a diagonal against the width's own
+ * `epsilon`, which is the only tolerance that means the same thing at `real` and at `f32`. `Float`
+ * is `sysl.math`'s trait for exactly that list (`sqrt`, `abs`, `copysign`, `hypot`, `epsilon`, and an
+ * `Ord`), so these routines run at both widths with one body each.
+ *
+ * **The complexes are not here, and the bound is what says so.** `Complex[F]` has no `Ord` and is no
+ * `Float`; a unitary QR over it needs a conjugate in every inner product, which is a different
+ * algorithm rather than this one at another type.
+ */
+
+import sysl.math.Float
+
+/** `A = Q R` by Householder reflections, for an `m x n` matrix with `m >= n`: `Q` is `m x n` with
+ * orthonormal columns and `R` is `n x n` upper triangular -- the *reduced* factorization, the one a
+ * least-squares solve reads.
+ *
+ * **A reflector rather than Gram-Schmidt**, because orthogonality is the whole point of `Q` and
+ * Gram-Schmidt loses it in rounding as the columns approach dependence; a reflector is orthogonal by
+ * construction, whatever the numbers. **The signs of `R`'s diagonal are not normalized**: each
+ * reflector sends its column to the side of the axis that avoids cancellation, so a diagonal cell may
+ * be negative and another implementation may answer the same factorization with a column of `Q` and
+ * a row of `R` both negated.
+ */
+qr[T: Field + Float](a: Matrix[T]) -> Result[(Matrix[T], Matrix[T]), Fail]
+    if a.rows < a.cols then return Err(ShapeMismatch)
+
+    var m = a.rows
+    var n = a.cols
+    var work = a.copy()
+    var full: Matrix[T] = Matrix.identity(m)
+
+    for k in 0..<n
+        var v = reflector(work, k)
+
+        reflect_rows(work, v, k)
+        reflect_cols(full, v, k)
+
+    var q: Matrix[T] = Matrix.zeros(m, n)
+    var r: Matrix[T] = Matrix.zeros(n, n)
+
+    for i in 0..<m
+        for j in 0..<n do q.set(i, j, full.at(i, j))
+
+    // Below the diagonal the reflections leave rounding noise where the mathematics leaves zero, so
+    // only the upper triangle is read across.
+    for i in 0..<n
+        for j in i..<n do r.set(i, j, work.at(i, j))
+
+    Ok((q, r))
+end qr
+
+/** The Householder vector that zeroes column `k` of `a` below the diagonal, or a zero vector when that
+ * part of the column is already zero -- the reflection is then the identity, and skipping it is what
+ * lets a zero column through without a division by zero.
+ *
+ * The length is accumulated by `hypot` rather than as a sum of squares, so a column of large cells
+ * does not overflow on its way to a length that is perfectly representable.
+ */
+private reflector[T: Field + Float](a: Matrix[T], k: int) -> Vector[T]
+    var v: Vector[T] = Vector.zeros(a.rows - k)
+    var size = T.zero()
+
+    for i in k..<a.rows
+        v.set(i - k, a.at(i, k))
+        size = size.hypot(a.at(i, k))
+
+    if size == T.zero() then return v
+
+    // The cell goes *away* from the axis it is sent to: adding the length with the cell's own sign
+    // never subtracts two nearly equal numbers.
+    v.set(0, v.at(0) + size.copysign(v.at(0)))
+    v
+end reflector
+
+/** `a <- H a` on rows `k..` of every column from `k` on, where `H = I - 2 v vᵀ / vᵀv`. */
+private reflect_rows[T: Field + Float](a: Matrix[T], v: Vector[T], k: int)
+    var vv = v * v
+
+    if vv == T.zero() then return
+
+    for j in k..<a.cols
+        var s = T.zero()
+
+        for i in 0..<v.n do s += v.at(i) * a.at(k + i, j)
+
+        var f = T(2) * s / vv
+
+        for i in 0..<v.n do a.set(k + i, j, a.at(k + i, j) - f * v.at(i))
+end reflect_rows
+
+/** `q <- q H`, which is how the product of the reflections is accumulated into `Q`. */
+private reflect_cols[T: Field + Float](q: Matrix[T], v: Vector[T], k: int)
+    var vv = v * v
+
+    if vv == T.zero() then return
+
+    for row in 0..<q.rows
+        var s = T.zero()
+
+        for i in 0..<v.n do s += q.at(row, k + i) * v.at(i)
+
+        var f = T(2) * s / vv
+
+        for i in 0..<v.n do q.set(row, k + i, q.at(row, k + i) - f * v.at(i))
+end reflect_cols
+
+/** The `x` minimising `|A x - b|`, through `A = Q R`: `R x = Qᵀ b`, solved by back-substitution.
+ *
+ * **Rank deficiency is refused rather than answered**, because a matrix with a dependent column has a
+ * whole line of minimisers and this returns one vector. The test is numpy's: a diagonal cell of `R`
+ * no larger than `epsilon * max(m, n)` times the largest one counts as zero. A wide matrix (`m < n`)
+ * is rank-deficient by counting, and is refused the same way.
+ */
+lstsq[T: Field + Float](a: Matrix[T], b: Vector[T]) -> Result[Vector[T], Fail]
+    if a.rows != b.n then return Err(ShapeMismatch)
+    if a.rows < a.cols then return Err(RankDeficient)
+
+    val (q, r) = qr(a)?
+    var n = a.cols
+    var largest = T.zero()
+
+    for i in 0..<n
+        if r.at(i, i).abs() > largest then largest = r.at(i, i).abs()
+
+    var tol = largest * T.epsilon() * T(a.rows)
+
+    for i in 0..<n
+        if r.at(i, i).abs() <= tol then return Err(RankDeficient)
+
+    var qtb: Matrix[T] = Matrix.zeros(n, 1)
+
+    for j in 0..<n
+        var s = T.zero()
+
+        for i in 0..<a.rows do s += q.at(i, j) * b.at(i)
+
+        qtb.set(j, 0, s)
+
+    Ok(substitute(r, qtb, 0))
+end lstsq
+
+/** The lower-triangular `L` with a positive diagonal and `L Lᵀ = A`, for a symmetric positive-definite
+ * `A`.
+ *
+ * Symmetry is checked first and to within rounding -- each pair of mirrored cells may differ by an
+ * `epsilon` of their own size, which is what a product like `Mᵀ M` leaves -- because the algorithm
+ * reads only the lower triangle and would otherwise factor a matrix it was not given. Definiteness is
+ * not checked separately: it is exactly the condition that every pivot is positive, so the
+ * factorization *is* the test, and a pivot that is zero, negative or not a number refuses it.
+ */
+cholesky[T: Field + Float](a: Matrix[T]) -> Result[Matrix[T], Fail]
+    if !a.is_square() then return Err(NotSquare)
+
+    var n = a.rows
+
+    for i in 0..<n
+        for j in i + 1..<n
+            var x = a.at(i, j)
+            var y = a.at(j, i)
+
+            if (x - y).abs() > T.epsilon() * (x.abs() + y.abs()) then return Err(NotSymmetric)
+
+    var l: Matrix[T] = Matrix.zeros(n, n)
+
+    for j in 0..<n
+        var d = a.at(j, j)
+
+        for k in 0..<j do d -= l.at(j, k) * l.at(j, k)
+
+        if !(d > T.zero()) then return Err(NotPositiveDefinite)
+
+        var root = d.sqrt()
+
+        l.set(j, j, root)
+
+        for i in j + 1..<n
+            var s = a.at(i, j)
+
+            for k in 0..<j do s -= l.at(i, k) * l.at(j, k)
+
+            l.set(i, j, s / root)
+
+    Ok(l)
+end cholesky

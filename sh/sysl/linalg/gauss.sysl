@@ -104,8 +104,10 @@ private reduce[T: Field](m: Matrix[T], carry: Matrix[T]) -> Reduced[T]
     Reduced(u, swaps, pivots)
 end reduce
 
-/** Back-substitution through an upper-triangular matrix, for one column of the carried right-hand side. */
-private substitute[T: Field](u: Matrix[T], carry: Matrix[T], col: int) -> Vector[T]
+/** Back-substitution through an upper-triangular matrix, for one column of the carried right-hand side.
+ * Module-wide because `factor.sysl`'s least squares ends in the same triangle.
+ */
+private[linalg] substitute[T: Field](u: Matrix[T], carry: Matrix[T], col: int) -> Vector[T]
     var n = u.rows
     var out: Vector[T] = Vector.zeros(n)
 
