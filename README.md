@@ -207,20 +207,21 @@ tolerance and no ordering.
 
 ## Performance
 
-Measured 2026-10-13 on an Apple M5 Pro, sysl 0.1.0-alpha.11 at `-O2` against naive C with the same
-loops at `clang -O2` (Apple clang 21), `real`/`double`, median of 5–9 runs. The figure is how many
-times longer the sysl package takes:
+Measured on an Apple M5 Pro against naive C with the same loops at `clang -O2` (Apple clang 21),
+`real`/`double`, median of 5–9 runs, sysl at `-O2`. The figure is how many times longer the sysl
+package takes, with sysl 0.1.0-alpha.11 (2026-10-13) and 0.1.0-alpha.12 (2026-10-14):
 
 | n | `A * B` | `lu` | `qr` |
 |---|---|---|---|
-| 64 | 22× | 21× | 7.9× |
-| 256 | 20× | 16× | 2.6× |
-| 512 | 20× | 16× | 1.8× |
+| 64 | 22× → 2.2× | 21× → 5.1× | 7.9× → 3.0× |
+| 256 | 20× → 1.15× | 16× → 4.0× | 2.6× → 1.2× |
+| 512 | 20× → 0.75× | 16× → 3.8× | 1.8× → 1.06× |
 
-These are straightforward loops, not a tuned BLAS, and the gap is in the compiler rather than in the
-algorithms: every `Matrix.set` takes and drops a reference to the cell buffer, and with that in the
-inner loop the buffer's bounds are reloaded and checked on every cell and nothing vectorizes. QR's
-figure is smaller only because its column-wise reflections are slow in C too.
+These are straightforward loops, not a tuned BLAS. alpha.11 took and dropped a reference to the cell
+buffer around every `Matrix.set`, which alpha.12 no longer does. What remains in `lu` is that the
+`&Buf` header (pointer, length, data) is reloaded and bounds-checked on every cell written through
+`*self`, because the store may alias it, and so the row update does not vectorize; `T.zero()` is also
+an out-of-line call per row.
 
 ## Where it came from
 
