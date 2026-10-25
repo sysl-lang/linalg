@@ -12,7 +12,7 @@ sh/sysl/linalg/
     bareiss.sysl    fraction-free elimination, for rings whose division cannot be trusted
     fail.sysl       what a decomposition refuses, and why
     tests.sysl      what all of it claims, run by `sysl test .`
-package.hocon       who this package is, and what it needs of the machine
+sysl.hocon          who this package is, and what it needs of the machine
 ```
 
 The module is **`sh.sysl.linalg`**. It depends on nothing outside the standard library —

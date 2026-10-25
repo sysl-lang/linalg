@@ -207,9 +207,9 @@ end equality_is_exact
 // including the complexes, whose text no numeric formatter knows how to produce.
 @test("a vector and a matrix render through Display")
 rendering_through_display()
-    assert_eq(str(Vector.of([1, 2, 3])), "(1, 2, 3)", "a vector")
-    assert_eq(str(Matrix.of(2, 2, [1, 2, 3, 4])), "(1, 2); (3, 4)", "a matrix, row by row")
-    assert_eq(str(Vector.of([Complex(1.0, 2.0)])), "(1+2i)", "and the element decides its own text")
+    assert_eq(Vector.of([1, 2, 3]).to_string(), "(1, 2, 3)", "a vector")
+    assert_eq(Matrix.of(2, 2, [1, 2, 3, 4]).to_string(), "(1, 2); (3, 4)", "a matrix, row by row")
+    assert_eq(Vector.of([Complex(1.0, 2.0)]).to_string(), "(1+2i)", "and the element decides its own text")
 
 // The field describes the whole value and the precision describes each number in it, which is the
 // split `Complex[F]` makes -- three significant digits in every component, not the first three bytes
@@ -232,11 +232,11 @@ the_specifier_splits()
 rows_render_as_vectors()
     val m = Matrix.of(2, 3, [1, 2, 3, 4, 5, 6])
 
-    assert_eq(str(m), str(m.row(0)) + "; " + str(m.row(1)), "row by row, in the vectors' own form")
+    assert_eq(m.to_string(), m.row(0).to_string() + "; " + m.row(1).to_string(), "row by row, in the vectors' own form")
 
 @test("a refusal renders through Display too")
 a_refusal_renders()
-    assert_eq(str(Singular), "the matrix is singular", "the variant's own words")
+    assert_eq(Singular.to_string(),"the matrix is singular", "the variant's own words")
     assert(Singular == Singular, "a bare enum compares by discriminant")
     assert(NotSquare != Singular, "and tells its variants apart")
 
@@ -252,7 +252,7 @@ elimination_solves()
         Ok(x) ->
             assert(x.near(Vector.of([2.0, 3.0, -1.0]), eps), "the solution")
             assert((m * x).near(rhs, eps), "and the residual, through the operator")
-        Err(e) -> assert(false, "elimination finds the solution: " + str(e))
+        Err(e) -> assert(false, "elimination finds the solution: " + e.to_string())
 end elimination_solves
 
 // The pivot at (0,0) is zero, so a naive elimination divides by it. Partial pivoting is what makes
@@ -264,7 +264,7 @@ a_zero_pivot_is_swapped_away()
 
     solve(m, b) match
         Ok(x) -> assert((m * x).near(b, eps), "the residual confirms it")
-        Err(e) -> assert(false, "a zero pivot is swapped away: " + str(e))
+        Err(e) -> assert(false, "a zero pivot is swapped away: " + e.to_string())
 end a_zero_pivot_is_swapped_away
 
 // The error path, which a library owes as much as it owes the answer: one equation twice, a
@@ -342,7 +342,7 @@ the_inverse()
             // Solving by inverting must agree with solving by elimination, and they are different
             // arithmetic -- this is the check that would catch a sign or an index error in either.
             assert((inv * rhs).near(Vector.of([2.0, 3.0, -1.0]), eps), "and it solves its own system")
-        Err(e) -> assert(false, "an inverse times its matrix is the identity: " + str(e))
+        Err(e) -> assert(false, "an inverse times its matrix is the identity: " + e.to_string())
 end the_inverse
 
 @test("a singular matrix has no inverse")
@@ -404,7 +404,7 @@ a_complex_system()
 
     solve(cm, cb) match
         Ok(x) -> assert(x.near(cv, 0.000001), "the same solution came back")
-        Err(e) -> assert(false, "a complex system recovers the vector it was built from: " + str(e))
+        Err(e) -> assert(false, "a complex system recovers the vector it was built from: " + e.to_string())
 end a_complex_system
 
 @test("a complex matrix has a complex inverse")
@@ -413,7 +413,7 @@ a_complex_inverse()
 
     inverse(cm) match
         Ok(inv) -> assert((cm * inv).near(Matrix.identity(2), 0.000001), "and it is a two-sided one")
-        Err(e) -> assert(false, "a complex matrix has a complex inverse: " + str(e))
+        Err(e) -> assert(false, "a complex matrix has a complex inverse: " + e.to_string())
 
 // A complex matrix can be singular for a reason no real matrix could be: the second row is the first
 // multiplied by i, which is a dependence only this field can express.
@@ -445,7 +445,7 @@ the_same_bodies_at_f32()
 
     solve(fm, fb) match
         Ok(x) -> assert(x.near(Vector.of([1.0f32, 3.0f32]), 0.0001), "the solution, at the narrower width")
-        Err(e) -> assert(false, "the same elimination runs at f32: " + str(e))
+        Err(e) -> assert(false, "the same elimination runs at f32: " + e.to_string())
 
     // The rule is about **slice literals** and nothing else: the comparison reads its element type off
     // the value it was handed, so the bare `5.0` here takes it from `det(fm)`.
@@ -471,7 +471,7 @@ bareiss_determinant()
 
     det_exact(im) match
         Ok(d) -> assert_eq(d, 40, "40, where Gauss over the integers would report 60")
-        Err(e) -> assert(false, "fraction-free elimination answers the determinant exactly: " + str(e))
+        Err(e) -> assert(false, "fraction-free elimination answers the determinant exactly: " + e.to_string())
 
 @test("and a solution whose numerators are exact, over a single denominator")
 bareiss_solution()
@@ -490,7 +490,7 @@ bareiss_solution()
             // **Exact arithmetic did not make the answer representable.** The solution is
             // (-1/5, 2/5, 3/5) and no `int` holds any of it -- which is why `Exact` has no `value(i)`.
             assert_eq(x.numerators.at(0) / x.denominator, 0, "dividing them is the truncation this avoided")
-        Err(e) -> assert(false, "and a solution whose numerators are exact: " + str(e))
+        Err(e) -> assert(false, "and a solution whose numerators are exact: " + e.to_string())
 end bareiss_solution
 
 // A system whose whole content is the exactness. The determinant is the difference of two 19-digit
@@ -504,13 +504,13 @@ bareiss_cancellation()
 
     det_exact(bm) match
         Ok(d) -> assert_eq(d, -1, "exactly minus one")
-        Err(e) -> assert(false, "a determinant of -1 survives the cancellation: " + str(e))
+        Err(e) -> assert(false, "a determinant of -1 survives the cancellation: " + e.to_string())
 
     solve_exact(bm, bb) match
         Ok(x) ->
             assert_eq(x.numerators, Vector.of([-1, 1]), "and the solution comes back exact")
             assert_eq(x.denominator, -1, "over its own determinant")
-        Err(e) -> assert(false, "and the solution comes back exact: " + str(e))
+        Err(e) -> assert(false, "and the solution comes back exact: " + e.to_string())
 end bareiss_cancellation
 
 // The same matrix over the reals, and the only claim about it worth making.
@@ -545,7 +545,7 @@ bareiss_refuses_the_same_shapes()
 
     det_exact(dependent) match
         Ok(d) -> assert_eq(d, 0, "a singular determinant is an answer, not a failure")
-        Err(e) -> assert(false, "a singular determinant is an answer: " + str(e))
+        Err(e) -> assert(false, "a singular determinant is an answer: " + e.to_string())
 
     solve_exact(dependent, Vector.of([3, 6])) match
         Ok(_) -> assert(false, "while the system itself is refused")
@@ -571,7 +571,7 @@ a_larger_system()
 
     solve(big, big * want) match
         Ok(got) -> assert(got.near(want, 0.000001), "the whole vector came back")
-        Err(e) -> assert(false, "a 12x12 system recovers the vector it was built from: " + str(e))
+        Err(e) -> assert(false, "a 12x12 system recovers the vector it was built from: " + e.to_string())
 
     assert(det(big).norm() > 1.0, "and its determinant is nowhere near zero")
 end a_larger_system
@@ -605,5 +605,5 @@ solving_does_not_consume()
 
     solve(m, Vector.of([8.0, -11.0, -3.0])) match
         Ok(_) -> assert(m == before, "every cell where it was")
-        Err(e) -> assert(false, "solving leaves the matrix it was given alone: " + str(e))
+        Err(e) -> assert(false, "solving leaves the matrix it was given alone: " + e.to_string())
 end solving_does_not_consume
