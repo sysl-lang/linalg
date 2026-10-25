@@ -9,7 +9,7 @@
 // This is the block a consumer writes to reach it:
 //
 //     dependencies {
-//       linalg { git = "github.com/sysl-lang/linalg", version = "0.1.1" }
+//       linalg { git = "github.com/sysl-lang/linalg", version = "0.1.2" }
 //     }
 //
 // The coordinate names the package, `linalg`; the module a program imports is `sh.sysl.linalg`. It
@@ -18,7 +18,7 @@
 
 package {
   name    = "linalg"
-  version = "0.1.1"
+  version = "0.1.2"
 
   // **The oldest compiler this builds with is 0.6.0**, the first with the `.to_string()` spelling
   // and the `sysl.hocon` manifest name. The scalar on the left -- `k * v` and `k * A` -- needs
