@@ -9,7 +9,7 @@
 // This is the block a consumer writes to reach it:
 //
 //     dependencies {
-//       linalg { git = "github.com/sysl-lang/linalg", version = "0.1.2" }
+//       linalg { git = "github.com/sysl-lang/linalg", version = "0.1.3" }
 //     }
 //
 // The coordinate names the package, `linalg`; the module a program imports is `sh.sysl.linalg`. It
@@ -18,14 +18,15 @@
 
 package {
   name    = "linalg"
-  version = "0.1.2"
+  version = "0.1.3"
 
-  // **The oldest compiler this builds with is 0.6.0**, the first with the `.to_string()` spelling
+  // **The suite is run on 0.8.0**, where integer overflow traps in a debug build. Nothing here needs
+  // more than 0.6.0, the first with the `.to_string()` spelling
   // and the `sysl.hocon` manifest name. The scalar on the left -- `k * v` and `k * A` -- needs
   // coherence to count a trait's *arguments*, which is what gives an `impl` whose subject is the
   // element a home in the module declaring `Vector`; and `Vector` and `Matrix` lay their cells out in
   // columns by measuring into a `Counting` sink rather than building every cell's text twice.
-  sysl = "0.6.0"
+  sysl = "0.8.0"
 }
 
 // **`heap = true`, and it is the storage rather than the algebra that asks for it.** A matrix's cells

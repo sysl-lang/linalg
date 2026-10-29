@@ -41,6 +41,10 @@ private struct Eliminated[T: Scalar]
  * or falls back if it fails; if the theorem were false this would silently truncate, which is the
  * failure it exists to prevent.
  *
+ * **The intermediate products are the limit, not the answer.** `u[i][j] * p` is a product of two
+ * minors, so it can overflow `T` when the result would have fitted; over `int` (32 bits) that traps
+ * in a debug build rather than wrapping into a wrong quotient.
+ *
  * A zero pivot is swapped away rather than tolerated, and the test is `== T.zero()` rather than a
  * comparison against a small number. **That is the second thing the element type decides and no bound
  * can say.** `gauss.sysl` rejects a pivot with `norm(...) <= tiny`, because subtraction in floating

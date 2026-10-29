@@ -493,12 +493,12 @@ bareiss_solution()
         Err(e) -> assert(false, "and a solution whose numerators are exact: " + e.to_string())
 end bareiss_solution
 
-// A system whose whole content is the exactness. The determinant is the difference of two 19-digit
-// products, both inside `int`, and it is -1: the two cancel almost completely, which is the case
-// floating point has nothing left to say about.
-@test("a determinant of -1 survives the cancellation of two 19-digit products")
+// A system whose whole content is the exactness. The determinant is the difference of two 10-digit
+// products, both inside `int` (32 bits: each is about 1.6e9), and it is -1: the two cancel almost
+// completely, which is the case floating point has nothing left to say about.
+@test("a determinant of -1 survives the cancellation of two 10-digit products")
 bareiss_cancellation()
-    var huge = 1000000000
+    var huge = 40000
     var bm = Matrix.of(2, 2, [huge + 1, huge, huge, huge - 1])
     var bb = Vector.of([1, 1])
 
